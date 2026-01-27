@@ -235,8 +235,7 @@ impl<V> ParetoFrontier<V> {
     }
 
     /// Calculate the hypervolume of the frontier relative to a reference point.
-    pub fn hypervolume(&self, ref_point: &[f64]) -> f64
-    {
+    pub fn hypervolume(&self, ref_point: &[f64]) -> f64 {
         let dim = self.directions.len();
         if dim == 0 || self.is_empty() {
             return 0.0;
@@ -312,33 +311,38 @@ fn dominates_max(a: &[f64], b: &[f64], eps: f64) -> bool {
 /// Exact hypervolume in maximize space, reference at the origin.
 ///
 /// This uses recursive slicing on the last dimension:
-/// \[
+/// $$
 /// HV_d(P) = \sum_{k} (y_k - y_{k+1}) \cdot HV_{d-1}(\pi(P_{y \ge y_k}))
-/// \]
-/// where \(y_k\) are the unique last-coordinate levels (descending), and \(\pi\) drops the last coordinate.
+/// $$
+/// where $y_k$ are the unique last-coordinate levels (descending), and $\pi$ drops the last coordinate.
 fn hypervolume_max_exact(points: &[Vec<f64>], dim: usize, eps: f64) -> f64 {
     debug_assert!(dim >= 1);
     if points.is_empty() {
         return 0.0;
     }
     if dim == 1 {
-        return points
-            .iter()
-            .map(|p| p[0])
-            .fold(0.0, f64::max);
+        return points.iter().map(|p| p[0]).fold(0.0, f64::max);
     }
     if dim == 2 {
         return hypervolume_max_2d(points, eps);
     }
 
     // Collect unique slice levels (positive only).
-    let mut levels: Vec<f64> = points.iter().map(|p| p[dim - 1]).filter(|&v| v > eps).collect();
+    let mut levels: Vec<f64> = points
+        .iter()
+        .map(|p| p[dim - 1])
+        .filter(|&v| v > eps)
+        .collect();
     levels.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal)); // descending
     levels.dedup_by(|a, b| (*a - *b).abs() <= eps);
 
     let mut hv = 0.0;
     for (idx, &level) in levels.iter().enumerate() {
-        let next = if idx + 1 < levels.len() { levels[idx + 1] } else { 0.0 };
+        let next = if idx + 1 < levels.len() {
+            levels[idx + 1]
+        } else {
+            0.0
+        };
         let thickness = (level - next).max(0.0);
         if thickness <= eps {
             continue;
@@ -412,4 +416,141 @@ pub fn dominates(directions: &[Direction], eps: f64, a: &[f64], b: &[f64]) -> bo
         }
     }
     strictly_better
+}
+
+// ============================================================================
+// Back-compat helpers (bench + older call sites)
+// ============================================================================
+
+/// Return indices of the Pareto frontier (all objectives maximized).
+///
+/// This is a convenience wrapper intended for benchmarks and legacy code.
+/// The canonical API is [`ParetoFrontier`].
+pub fn pareto_indices(points: &[Vec<f32>]) -> Option<Vec<usize>> {
+    if points.is_empty() {
+        return Some(Vec::new());
+    }
+    let d = points[0].len();
+    if d == 0 || points.iter().any(|p| p.len() != d) {
+        return None;
+    }
+
+    let directions = vec![Direction::Maximize; d];
+    let eps = 1e-9;
+
+    let as_f64: Vec<Vec<f64>> = points
+        .iter()
+        .map(|p| p.iter().map(|&x| x as f64).collect())
+        .collect();
+
+    let mut keep = vec![true; points.len()];
+    for i in 0..as_f64.len() {
+        if !keep[i] {
+            continue;
+        }
+        for j in 0..as_f64.len() {
+            if i == j || !keep[i] {
+                continue;
+            }
+            if dominates(&directions, eps, &as_f64[j], &as_f64[i]) {
+                keep[i] = false;
+            }
+        }
+    }
+
+    Some(
+        keep.into_iter()
+            .enumerate()
+            .filter_map(|(i, ok)| ok.then_some(i))
+            .collect(),
+    )
+}
+
+/// Return indices of the Pareto frontier using a simple 2D sweep (maximize/maximize).
+///
+/// Falls back to [`pareto_indices`] if `points` are not 2D.
+pub fn pareto_indices_2d(points: &[Vec<f32>]) -> Option<Vec<usize>> {
+    if points.is_empty() {
+        return Some(Vec::new());
+    }
+    if points.iter().any(|p| p.len() != 2) {
+        return pareto_indices(points);
+    }
+
+    // Sort by x descending, then y descending.
+    let mut idxs: Vec<usize> = (0..points.len()).collect();
+    idxs.sort_by(|&i, &j| {
+        let xi = points[i][0];
+        let xj = points[j][0];
+        xj.partial_cmp(&xi)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                points[j][1]
+                    .partial_cmp(&points[i][1])
+                    .unwrap_or(Ordering::Equal)
+            })
+    });
+
+    let mut best_y = f32::NEG_INFINITY;
+    let mut out = Vec::new();
+    for i in idxs {
+        let y = points[i][1];
+        if y > best_y {
+            out.push(i);
+            best_y = y;
+        }
+    }
+    Some(out)
+}
+
+/// Return indices of the k-dominant frontier (maximize/maximize/...).
+///
+/// Definition used here: point `a` k-dominates `b` if `a` is strictly better
+/// in at least `k` dimensions and is not worse in any dimension.
+pub fn pareto_indices_k_dominance(points: &[Vec<f32>], k: usize) -> Option<Vec<usize>> {
+    if points.is_empty() {
+        return Some(Vec::new());
+    }
+    let d = points[0].len();
+    if d == 0 || points.iter().any(|p| p.len() != d) {
+        return None;
+    }
+    let k = k.min(d);
+    let eps = 1e-9_f64;
+
+    let as_f64: Vec<Vec<f64>> = points
+        .iter()
+        .map(|p| p.iter().map(|&x| x as f64).collect())
+        .collect();
+
+    let mut keep = vec![true; points.len()];
+    for i in 0..as_f64.len() {
+        if !keep[i] {
+            continue;
+        }
+        'cmp: for j in 0..as_f64.len() {
+            if i == j || !keep[i] {
+                continue;
+            }
+            let mut better = 0usize;
+            for (&aj, &ai) in as_f64[j].iter().zip(as_f64[i].iter()).take(d) {
+                if aj + eps < ai {
+                    continue 'cmp; // j is worse in this dim -> cannot dominate i
+                }
+                if aj > ai + eps {
+                    better += 1;
+                }
+            }
+            if better >= k {
+                keep[i] = false;
+            }
+        }
+    }
+
+    Some(
+        keep.into_iter()
+            .enumerate()
+            .filter_map(|(i, ok)| ok.then_some(i))
+            .collect(),
+    )
 }

@@ -29,8 +29,8 @@ proptest! {
 
         let dists = frontier.crowding_distances();
         assert_eq!(dists.len(), frontier.len());
-        
-        // At least two points should have infinite distance (the boundaries) 
+
+        // At least two points should have infinite distance (the boundaries)
         // if we have at least 2 points.
         if frontier.len() >= 2 {
             let infinite_count = dists.iter().filter(|&&d| d.is_infinite()).count();
