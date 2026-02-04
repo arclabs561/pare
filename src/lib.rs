@@ -6,6 +6,8 @@
 
 use std::cmp::Ordering;
 
+use thiserror::Error;
+
 /// Direction of optimization for a dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -64,6 +66,20 @@ pub struct ParetoFrontier<V> {
     stats: Vec<NormalizationStats>,
     labels: Vec<String>,
     eps: f64,
+}
+
+/// Errors returned when constructing a frontier from raw vectors.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum FrontierError {
+    /// No points were provided.
+    #[error("no points provided")]
+    Empty,
+    /// Points had inconsistent dimensionality (or dimension was 0).
+    #[error("points must be non-empty and have consistent dimensionality")]
+    InconsistentDimensions,
+    /// A value was NaN or infinite.
+    #[error("point value at [{point_idx}][{dim_idx}] is not finite")]
+    NonFinite { point_idx: usize, dim_idx: usize },
 }
 
 impl<V> ParetoFrontier<V> {
@@ -275,6 +291,65 @@ impl<V> ParetoFrontier<V> {
         // In oriented space, dominance is pure-maximize.
         let oriented = nondominated_max(&oriented, self.eps);
         hypervolume_max_exact(&oriented, dim, self.eps)
+    }
+}
+
+impl ParetoFrontier<usize> {
+    /// Construct a Pareto frontier from raw objective vectors.
+    ///
+    /// This is a convenience constructor used by the README quickstart:
+    /// - the attached `data` is the original index of each point
+    /// - all objectives are assumed to be [`Direction::Maximize`]
+    ///
+    /// For mixed maximize/minimize objectives, build a frontier with
+    /// [`ParetoFrontier::new`] and insert points via [`ParetoFrontier::push`].
+    ///
+    /// ```rust
+    /// use pare::ParetoFrontier;
+    ///
+    /// // [Relevance, Recency] - higher is better
+    /// let candidates = vec![
+    ///     vec![0.9, 0.1], // A
+    ///     vec![0.5, 0.5], // B
+    ///     vec![0.1, 0.9], // C
+    ///     vec![0.4, 0.4], // D (dominated by B)
+    /// ];
+    ///
+    /// let frontier = ParetoFrontier::try_new(&candidates).unwrap().indices();
+    /// assert_eq!(frontier, vec![0, 1, 2]);
+    /// ```
+    pub fn try_new(points: &[Vec<f64>]) -> Result<Self, FrontierError> {
+        if points.is_empty() {
+            return Err(FrontierError::Empty);
+        }
+        let d = points[0].len();
+        if d == 0 || points.iter().any(|p| p.len() != d) {
+            return Err(FrontierError::InconsistentDimensions);
+        }
+        for (pi, p) in points.iter().enumerate() {
+            for (di, &v) in p.iter().enumerate() {
+                if !v.is_finite() {
+                    return Err(FrontierError::NonFinite {
+                        point_idx: pi,
+                        dim_idx: di,
+                    });
+                }
+            }
+        }
+
+        let mut frontier = ParetoFrontier::new(vec![Direction::Maximize; d]);
+        for (i, p) in points.iter().enumerate() {
+            frontier.push(p.clone(), i);
+        }
+        Ok(frontier)
+    }
+
+    /// Return the original indices of points on the frontier.
+    ///
+    /// This is only meaningful for frontiers constructed with `data = usize`,
+    /// such as those produced by [`ParetoFrontier::try_new`].
+    pub fn indices(&self) -> Vec<usize> {
+        self.points.iter().map(|p| p.data).collect()
     }
 }
 
