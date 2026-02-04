@@ -43,6 +43,30 @@ Practical skyline/frontier implementations use pruning and/or indexing to avoid 
 
 This is a common “online skyline” pattern; it tends to work well when the maintained frontier is much smaller than the full candidate set.
 
+### When the frontier explodes (and why this surprises people)
+
+Two effects make frontiers/skyline results “blow up” in size:
+
+- **More dimensions ⇒ more incomparability**: as \(d\) increases, it becomes easier for points to trade off across many axes and thus avoid being dominated.
+- **Anti-correlation ⇒ more skyline points**: when objectives trade off strongly (e.g., “better quality implies higher price”), dominance becomes rarer, so the skyline grows.
+
+The anti-correlation point shows up explicitly in skyline literature; Shang & Kitsuregawa discuss skyline behavior on anti-correlated distributions and why “nice average-case assumptions” break on real data.  
+See: Shang & Kitsuregawa, “Skyline Operator on Anti-correlated Distributions” (PVLDB) PDF at `http://www.vldb.org/pvldb/vol6/p649-shang.pdf`.
+
+The pragmatic implication for system design is that “compute the skyline then let the user pick” stops being viable when the skyline is large; you need a second-stage preference model or an approximation/archiving strategy.
+
+#### What you can do instead (design menu)
+
+There isn’t a single universally-right answer, but these are common options:
+
+- **Scalarization (utility function)**: map \(x \mapsto u(x)\) and take top‑k by \(u\). This is the simplest way to force a total order, but you must accept the modeling assumptions.
+- **Multiple scalarizations**: sample many weight vectors and take the union of the corresponding winners; this is a cheap way to get “coverage” without keeping the whole skyline.
+- **ε‑archiving / grid archiving**: keep at most one representative per cell of a discretized objective space to cap archive size at a desired resolution.
+- **Relaxed dominance variants**:
+  - `pare` includes **k‑dominance** helpers (`pareto_indices_k_dominance`) which require being strictly better in at least \(k\) dimensions while being non-worse in all dimensions. This reduces frontier size, but it is a different relation than Pareto dominance, so interpret it as an approximation/heuristic rather than “the” frontier.
+- **Post-filter diversity**: compute some frontier/approx-front and then select a diverse subset (crowding distance, farthest-point sampling, clustering).
+- **Preference interaction**: ask the decision maker for a few comparisons or constraints and refine (common in decision analysis; less common in pure DB skyline).
+
 ### Floating point realities: strict dominance, ties, and epsilon tolerances
 
 Real systems rarely have perfect real numbers:
@@ -123,6 +147,27 @@ In 2D maximize space, for a non-dominated set sorted by \(x\) ascending, the \(y
 
 In \(d \ge 3\), the union-of-boxes geometry becomes much more complex; exact computation typically uses recursive decomposition/slicing or specialized data structures, and worst-case complexity grows quickly. The Guerreiro et al. survey is the best “one stop” map of these algorithmic trade-offs.
 
+### Hypervolume contributions and subset selection (and a non-obvious failure mode)
+
+For a set \(P\), the **hypervolume contribution** of a point \(p \in P\) is commonly defined as:
+
+\[
+\mathrm{HVC}(p \mid P) = \mathrm{HV}(P) - \mathrm{HV}(P \setminus \{p\})
+\]
+
+This is useful in “keep exactly \(m\) points” workflows:
+
+- If you start from a candidate set and repeatedly drop the point with the smallest contribution, you often preserve most of the dominated volume with far fewer points.
+- This idea appears in hypervolume-based EMOAs and in the “hypervolume subset selection problem” (HSSP) literature (surveyed by Guerreiro et al.).
+
+The subtlety is that “drop least-contributing point” does **not** guarantee that the *observed* hypervolume sequence behaves the way you intuitively expect once you add practical complications (notably adaptive reference points). Judt et al. show **non-monotonicity of obtained hypervolume** in a 1-greedy S‑metric selection setting under reference point adaptation, even in low dimensions.  
+See: Judt et al., “Non-monotonicity of Obtained Hypervolume in 1-greedy S-Metric Selection” PDF at `https://www.gm.th-koeln.de/ciopwebpub/Judt11a.d/Judt11a.pdf`.
+
+Takeaway for `pare` usage:
+
+- If you plan to use hypervolume as a progress metric, be explicit and stable about the reference point (and about any rescaling).
+- If you plan to use hypervolume contributions for downselection, test the behavior you care about (monotonicity, diversity retention) on representative data; the indicator is principled, but your overall procedure may not be.
+
 ## ε-dominance and archiving (why it exists)
 
 In many-objective optimization, the true non-dominated set can grow very large. **Archiving** strategies reduce this set while preserving coverage, often by introducing a resolution parameter \( \varepsilon \) (an “indifference” threshold) so points that are too close are treated as effectively equivalent.
@@ -150,5 +195,7 @@ When you call `ParetoFrontier::<usize>::try_new(...).indices()`, the returned in
 - Deb et al. (2000/2002), NSGA-II technical report PDF: `http://repository.ias.ac.in/83498/1/2-a.pdf`
 - Deb et al. (2002), NSGA-II IEEE reprint PDF (mirror): `https://www.cse.unr.edu/~sushil/class/gas/papers/nsga2.pdf`
 - Guerreiro et al. (2020), “The hypervolume indicator: Problems and algorithms” PDF: `https://arxiv.org/pdf/2005.00515.pdf`
+- Shang & Kitsuregawa (PVLDB), “Skyline Operator on Anti-correlated Distributions” PDF: `http://www.vldb.org/pvldb/vol6/p649-shang.pdf`
+- Judt et al. (2011), “Non-monotonicity of Obtained Hypervolume in 1-greedy S-Metric Selection” PDF: `https://www.gm.th-koeln.de/ciopwebpub/Judt11a.d/Judt11a.pdf`
 - Vinati (2022), “Flexible Skyline: one query to rule them all” PDF: `https://arxiv.org/pdf/2201.05096`
 - Lupi (2022), “Multi-objective optimization… through flexible skyline queries” PDF: `https://arxiv.org/pdf/2202.09857`
