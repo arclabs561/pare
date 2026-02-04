@@ -141,6 +141,39 @@ Hypervolume has a strong theoretical property (strict monotonicity w.r.t. set do
 - **Normalization is a modeling decision**: normalizing objectives (e.g., to [0,1]) can improve comparability, but it also injects assumptions (which min/max? over what population? fixed bounds or dynamic bounds?).
 - **Reference point selection is a preference**: choosing \(r\) implicitly says what region of objective space you consider relevant. “Bad” reference points can produce hypervolume values that are dominated by a single extreme point, masking diversity.
 
+### Choosing reference points and normalization bounds (the “quiet preference injection”)
+
+Two knobs make hypervolume (and any normalized scalar score) look objective while quietly encoding preferences:
+
+- **Normalization bounds**: what is “0” and what is “1” for each objective?
+- **Reference point**: what region of objective space do you care about covering?
+
+#### Static vs dynamic normalization
+
+If you normalize with **dynamic** bounds (e.g., min/max over the *current frontier*), you get a moving coordinate system:
+
+- Pros: always maps the currently-seen range into \([0,1]\) so weights stay numerically well-conditioned.
+- Cons: scores become **time-dependent**: adding a new extreme point can change the score of existing points even if their raw objectives did not change.
+
+If you normalize with **static** bounds (e.g., known feasible limits), you get stable semantics:
+
+- Pros: scores are comparable across runs and time; “0.9” means the same thing tomorrow.
+- Cons: you must know or estimate bounds, and if they are too loose the normalized values become squashed (small numeric differences become irrelevant).
+
+`pare::scalar_score` currently uses *frontier-local min/max* (dynamic), which is convenient for quick selection but should not be treated as a stable utility function unless you also control the candidate set definition.
+
+#### Reference point selection (hypervolume)
+
+Hypervolume compares sets with respect to a reference point \(r\). In practice:
+
+- Choose \(r\) as a **clearly-worse-than-acceptable** objective vector (a “nadir” / “worst acceptable” point), not merely the origin unless your objectives are literally improvements over zero.
+- Keep \(r\) **fixed** when you want to compare progress or compare algorithms. If you move \(r\) over time, you are changing the measurement instrument.
+
+In mixed maximize/minimize settings, be explicit about whether you interpret `ref_point` as:
+
+- a “worst acceptable” vector in the original objective units (which is what `pare` assumes), or
+- an internal oriented-space origin (in which case you must pre-transform values yourself).
+
 ### The nuance: why 2D is “easy” and higher dimensions are not
 
 In 2D maximize space, for a non-dominated set sorted by \(x\) ascending, the \(y\) values are non-increasing. Hypervolume can then be computed as a sum of rectangle strips.
