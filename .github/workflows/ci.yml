@@ -23,3 +23,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: clippy (serde)
+        run: cargo clippy --all-targets --features serde -- -D warnings
+      - name: test (serde)
+        run: cargo test --features serde

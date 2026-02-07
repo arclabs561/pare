@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use pare::{pareto_indices, pareto_indices_2d, pareto_indices_k_dominance};
+use pare::{pareto_indices, pareto_indices_2d, pareto_indices_k_dominance, Direction, ParetoFrontier};
 use rand::prelude::*;
 
 fn bench_pareto(c: &mut Criterion) {
@@ -12,6 +12,31 @@ fn bench_pareto(c: &mut Criterion) {
     let points: Vec<Vec<f32>> = (0..n)
         .map(|_| (0..d).map(|_| rng.random::<f32>()).collect())
         .collect();
+
+    // Bench ParetoFrontier::push (the online API that muxer actually uses).
+    // Uses f64 points and mixed directions to be realistic.
+    {
+        let f64_points: Vec<Vec<f64>> = (0..100)
+            .map(|_| (0..d).map(|_| rng.random::<f64>()).collect())
+            .collect();
+        let directions = vec![
+            Direction::Maximize,
+            Direction::Minimize,
+            Direction::Maximize,
+            Direction::Minimize,
+            Direction::Maximize,
+        ];
+
+        group.bench_function("push_n100_d5_mixed", |b| {
+            b.iter(|| {
+                let mut frontier = ParetoFrontier::new(directions.clone());
+                for (i, p) in f64_points.iter().enumerate() {
+                    frontier.push(black_box(p.clone()), i);
+                }
+                black_box(frontier.len());
+            })
+        });
+    }
 
     group.bench_function("indices_n1000_d5", |b| {
         b.iter(|| {

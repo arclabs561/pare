@@ -33,12 +33,8 @@ let frontier = ParetoFrontier::try_new(&candidates).unwrap().indices();
 ```
 
 `try_new()` is a convenience constructor that assumes **all objectives are maximized** and
-stores each point's original index as its associated `data`.
-
-For mixed maximize/minimize objectives, build a `ParetoFrontier` with explicit directions and
-insert points with `push()`:
-
-```rust
+stores each point's original index as its associated `data`.For mixed maximize/minimize objectives, build a `ParetoFrontier` with explicit directions and
+insert points with `push()`:```rust
 use pare::{Direction, ParetoFrontier};
 
 // [accuracy (higher is better), latency_ms (lower is better)]

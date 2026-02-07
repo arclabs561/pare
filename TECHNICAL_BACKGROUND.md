@@ -211,6 +211,66 @@ One place to start for background on archiving and indicator-based evaluation is
 
 `pare` does not currently implement ε-archiving as a first-class feature (it uses an `eps` tolerance for floating comparison in dominance), but the concept is relevant if you later want to bound frontier size or enforce a “grid” resolution.
 
+## Objective redundancy analysis (`pare::sensitivity`)
+
+When multiple objectives are evaluated over a shared set of design points (arms, covariate cells, etc.), some objectives may be **redundant**: any change to the design that improves one necessarily improves (or hurts) the other by a proportional amount. The `sensitivity` module provides tools to detect this.
+
+### The gradient test
+
+For each objective `L_i`, the **sensitivity function** measures how `L_i` responds to an infinitesimal increase in sampling at design point `j`:
+
+```
+s_i(j) = dL_i / d mu(j)
+```
+
+Two objectives are **locally redundant** when their sensitivity vectors are proportional (cosine similarity = 1.0 or -1.0). The **effective objective dimension** is the number of linearly independent sensitivity directions, computed via the eigenvalue spectrum of the Gram matrix `G_{ij} = <s_i, s_j>`.
+
+### Saturation principle
+
+The Pareto front dimension is bounded by:
+
+```
+dim(Pareto front) <= min(m - 1, D_eff)
+```
+
+where `m` is the number of named objectives and `D_eff` is the effective dimension of the design space. You can name 17 objectives, but if your design has 3 degrees of freedom, at most 4 can be simultaneously non-redundant.
+
+### Average-case vs. worst-case aggregation
+
+A structural finding relevant to multi-objective sequential sampling:
+
+- **Average-case objectives** (average detection delay, integrated MSE) have sensitivity functions proportional to `1/p(x)^2`, where `p(x)` is the allocation probability at design point `x`. They are **structurally redundant** regardless of problem dimension.
+- **Worst-case objectives** (worst-case detection delay) concentrate sensitivity on the bottleneck cell, producing a point-mass sensitivity that is linearly independent from smooth objectives.
+
+This means: adding "average detection delay" to a set of objectives that already includes "average MSE" does **not** create a new tradeoff axis. To get a genuinely independent monitoring objective, one must use a worst-case formulation.
+
+### Usage
+
+```rust
+use pare::sensitivity::analyze_redundancy;
+
+let sensitivities = vec![
+    vec![1.0, 2.0, 3.0],  // objective 0: some sensitivity profile
+    vec![2.0, 4.0, 6.0],  // objective 1: proportional to 0 (redundant)
+    vec![0.0, 0.0, 1.0],  // objective 2: independent direction
+];
+
+let analysis = analyze_redundancy(&sensitivities).unwrap();
+assert_eq!(analysis.effective_dimension(0.01), 2);
+assert_eq!(analysis.pareto_dimension_bound(1e-6), 1);
+
+let pairs = analysis.redundant_pairs(0.99);
+assert_eq!(pairs.len(), 1); // objectives 0 and 1 are redundant
+```
+
+See `pare::sensitivity::RedundancyAnalysis` for the full API: eigenvalues, cosine similarity matrix, variance fractions, and redundant pair identification.
+
+### References
+
+- Ehrgott & Nickel (2002). On the number of criteria needed to decide Pareto optimality. *Math Methods OR*.
+- Zhen et al. (2018). Multiobjective test problems with degenerate Pareto fronts. *arXiv*.
+- Simchi-Levi & Wang (2024). Multi-armed bandit experimental design. *Management Science*.
+
 ## Mapping back to `pare` (what to expect)
 
 - **Frontier maintenance**: `ParetoFrontier::push` is an online skyline update; worst case is linear in current frontier size times dimension.

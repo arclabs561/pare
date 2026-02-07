@@ -58,3 +58,44 @@ proptest! {
         }
     }
 }
+
+// Brute-force cross-check: keep cases modest (O(n^2) per case).
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, .. ProptestConfig::default() })]
+
+    #[test]
+    fn test_frontier_matches_bruteforce_3d(values in prop::collection::vec(prop::collection::vec(0.0..1.0, 3), 1..25)) {
+        // Brute force: i is on the frontier iff no j dominates i.
+        let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize, Direction::Maximize]);
+        for (i, v) in values.iter().cloned().enumerate() {
+            f.push(v, i);
+        }
+        let kept: std::collections::BTreeSet<usize> = f.points().iter().map(|p| p.data).collect();
+
+        let dominates = |a: &[f64], b: &[f64]| -> bool {
+            let mut strictly = false;
+            for (&av, &bv) in a.iter().zip(b.iter()) {
+                if av + 1e-12 < bv {
+                    return false;
+                }
+                if av > bv + 1e-12 {
+                    strictly = true;
+                }
+            }
+            strictly
+        };
+
+        for i in 0..values.len() {
+            let mut dom = false;
+            for j in 0..values.len() {
+                if i == j { continue; }
+                if dominates(&values[j], &values[i]) {
+                    dom = true;
+                    break;
+                }
+            }
+            let brute_kept = !dom;
+            assert_eq!(kept.contains(&i), brute_kept);
+        }
+    }
+}

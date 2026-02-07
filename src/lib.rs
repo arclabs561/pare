@@ -8,6 +8,8 @@ use std::cmp::Ordering;
 
 use thiserror::Error;
 
+pub mod sensitivity;
+
 /// Direction of optimization for a dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -158,6 +160,12 @@ impl<V> ParetoFrontier<V> {
     }
 
     /// Returns the normalized score for a point across all dimensions (higher is better).
+    ///
+    /// **Warning: dynamic normalization.** This method normalizes each dimension to `[0,1]`
+    /// using the min/max of the *current frontier*. Adding or removing points changes the
+    /// normalization, which means scores are **not stable across different frontier snapshots**.
+    /// If you need stable scores, normalize objectives against fixed (static) bounds before
+    /// insertion and use uniform weights on the pre-normalized values.
     pub fn scalar_score(&self, point_idx: usize, weights: &[f64]) -> f64 {
         let p = &self.points[point_idx];
         let mut score = 0.0;
@@ -251,6 +259,15 @@ impl<V> ParetoFrontier<V> {
     }
 
     /// Calculate the hypervolume of the frontier relative to a reference point.
+    ///
+    /// **Reference point selection matters.** Hypervolume values are only comparable for
+    /// the same `ref_point` and the same objective scaling.  Choose `ref_point` as a
+    /// "clearly worse than acceptable" vector (a nadir point), not merely the origin
+    /// unless your objectives are literally improvements over zero.  Keep `ref_point`
+    /// fixed when comparing progress across runs or algorithms.
+    ///
+    /// For mixed maximize/minimize objectives, `ref_point` is interpreted in the original
+    /// objective units (this method handles the orientation internally).
     pub fn hypervolume(&self, ref_point: &[f64]) -> f64 {
         let dim = self.directions.len();
         if dim == 0 || self.is_empty() {
@@ -348,6 +365,10 @@ impl ParetoFrontier<usize> {
     ///
     /// This is only meaningful for frontiers constructed with `data = usize`,
     /// such as those produced by [`ParetoFrontier::try_new`].
+    ///
+    /// **Order note.** The returned indices are in the frontier's internal insertion
+    /// order, not sorted by any objective.  If you need a stable ordering, sort the
+    /// result explicitly (e.g. by one objective value or by `data`).
     pub fn indices(&self) -> Vec<usize> {
         self.points.iter().map(|p| p.data).collect()
     }
@@ -524,11 +545,12 @@ pub fn pareto_indices(points: &[Vec<f32>]) -> Option<Vec<usize>> {
             continue;
         }
         for j in 0..as_f64.len() {
-            if i == j || !keep[i] {
+            if i == j || !keep[j] {
                 continue;
             }
             if dominates(&directions, eps, &as_f64[j], &as_f64[i]) {
                 keep[i] = false;
+                break; // i is dominated; no need to check further
             }
         }
     }
