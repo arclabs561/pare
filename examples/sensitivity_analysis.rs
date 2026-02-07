@@ -105,16 +105,27 @@ fn main() {
     let analysis = analyze_redundancy(&sensitivities).unwrap();
 
     // Print eigenvalue spectrum.
-    println!("Eigenvalue spectrum (Gram matrix of {} objectives over {} design points):",
-        analysis.num_objectives, analysis.num_design_points);
-    println!("{:>5}  {:>14}  {:>10}  {:>12}", "k", "eigenvalue", "% variance", "cumulative %");
+    println!(
+        "Eigenvalue spectrum (Gram matrix of {} objectives over {} design points):",
+        analysis.num_objectives, analysis.num_design_points
+    );
+    println!(
+        "{:>5}  {:>14}  {:>10}  {:>12}",
+        "k", "eigenvalue", "% variance", "cumulative %"
+    );
     println!("{}", "-".repeat(48));
     let total: f64 = analysis.eigenvalues.iter().sum();
     let mut cumul = 0.0;
     for (i, &ev) in analysis.eigenvalues.iter().enumerate() {
         let pct = if total > 0.0 { 100.0 * ev / total } else { 0.0 };
         cumul += pct;
-        println!("{:>5}  {:>14.4}  {:>9.2}%  {:>11.2}%", i + 1, ev, pct, cumul);
+        println!(
+            "{:>5}  {:>14.4}  {:>9.2}%  {:>11.2}%",
+            i + 1,
+            ev,
+            pct,
+            cumul
+        );
     }
 
     // Effective dimension at several thresholds.
@@ -123,8 +134,10 @@ fn main() {
         let dim = analysis.effective_dimension(eps);
         println!("  eps={:.3}: {} independent axes", eps, dim);
     }
-    println!("  Pareto front dimension bound: {}",
-        analysis.pareto_dimension_bound(1e-6));
+    println!(
+        "  Pareto front dimension bound: {}",
+        analysis.pareto_dimension_bound(1e-6)
+    );
 
     // Pairwise cosine similarity.
     let m = analysis.num_objectives;
@@ -154,14 +167,20 @@ fn main() {
     } else {
         println!("\nNearly-redundant pairs (|cosine| > 0.95):");
         for (i, j, c) in &pairs {
-            println!("  {} <-> {}: cosine = {:.4}",
-                objective_names[*i], objective_names[*j], c);
+            println!(
+                "  {} <-> {}: cosine = {:.4}",
+                objective_names[*i], objective_names[*j], c
+            );
         }
     }
 
     // Trace sanity check.
     let ev_sum: f64 = analysis.eigenvalues.iter().sum();
     let trace = analysis.trace();
-    println!("\nTrace sanity: eigenvalue_sum={:.4}, gram_trace={:.4}, delta={:.2e}",
-        ev_sum, trace, (ev_sum - trace).abs());
+    println!(
+        "\nTrace sanity: eigenvalue_sum={:.4}, gram_trace={:.4}, delta={:.2e}",
+        ev_sum,
+        trace,
+        (ev_sum - trace).abs()
+    );
 }

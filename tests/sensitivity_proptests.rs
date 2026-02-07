@@ -17,10 +17,7 @@ fn sensitivity_matrix(
     n: RangeInclusive<usize>,
 ) -> impl Strategy<Value = Vec<SensitivityRow>> {
     (m, n).prop_flat_map(|(m, n)| {
-        prop::collection::vec(
-            prop::collection::vec(-10.0..10.0_f64, n..=n),
-            m..=m,
-        )
+        prop::collection::vec(prop::collection::vec(-10.0..10.0_f64, n..=n), m..=m)
     })
 }
 

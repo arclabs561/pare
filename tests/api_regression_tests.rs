@@ -31,7 +31,11 @@ fn try_new_rejects_non_finite_values() {
 fn dominates_is_irreflexive() {
     let eps = 1e-12;
     let a = [1.0, 2.0, 3.0];
-    let dirs = [Direction::Maximize, Direction::Maximize, Direction::Minimize];
+    let dirs = [
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Minimize,
+    ];
     assert!(!dominates(&dirs, eps, &a, &a));
 }
 
@@ -96,4 +100,3 @@ fn hypervolume_orients_minimize_dimensions_against_reference() {
     let hv2 = f.hypervolume(&ref_point);
     assert!((hv2 - hv1).abs() < 1e-9, "hv should be unchanged");
 }
-

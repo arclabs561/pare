@@ -126,7 +126,10 @@ impl RedundancyAnalysis {
             return 0;
         }
         let threshold = eps * max_ev;
-        self.eigenvalues.iter().filter(|&&ev| ev > threshold).count()
+        self.eigenvalues
+            .iter()
+            .filter(|&&ev| ev > threshold)
+            .count()
     }
 
     /// Pareto front dimension upper bound: `min(rank - 1, m - 1)`, where rank
@@ -315,11 +318,7 @@ pub fn analyze_redundancy(sensitivities: &[SensitivityRow]) -> Option<Redundancy
 /// - `objectives`: slice of closures, each mapping a design vector to a scalar.
 /// - `eps`: perturbation step size.  Smaller is more accurate for smooth objectives
 ///   but more susceptible to floating-point cancellation.  1e-7 is a common default.
-pub fn finite_difference_jacobian<F>(
-    mu: &[f64],
-    objectives: &[F],
-    eps: f64,
-) -> Vec<SensitivityRow>
+pub fn finite_difference_jacobian<F>(mu: &[f64], objectives: &[F], eps: f64) -> Vec<SensitivityRow>
 where
     F: Fn(&[f64]) -> f64,
 {
@@ -476,10 +475,7 @@ mod tests {
         // Rank is still 1: the objectives are coupled (one is a deterministic
         // function of the other), just in opposite directions.
         // Pareto dimension = 0.
-        let s = vec![
-            vec![1.0, 2.0, 3.0],
-            vec![-2.0, -4.0, -6.0],
-        ];
+        let s = vec![vec![1.0, 2.0, 3.0], vec![-2.0, -4.0, -6.0]];
         let a = analyze_redundancy(&s).unwrap();
         assert_eq!(a.pareto_dimension_bound(1e-6), 0);
         let cos = a.cosine(0, 1).unwrap();
@@ -493,10 +489,7 @@ mod tests {
     fn orthogonal_sensitivities_have_full_rank() {
         // s_0 and s_1 are orthogonal unit vectors.
         // Rank = 2, Pareto dimension = 1 (a genuine 1D tradeoff curve).
-        let s = vec![
-            vec![1.0, 0.0, 0.0],
-            vec![0.0, 1.0, 0.0],
-        ];
+        let s = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]];
         let a = analyze_redundancy(&s).unwrap();
         assert_eq!(a.effective_dimension(0.01), 2);
         assert_eq!(a.pareto_dimension_bound(1e-6), 1);
@@ -539,7 +532,10 @@ mod tests {
             "eigenvalue sum = {ev_sum}, trace = {trace}"
         );
         // Also verify trace = sum of squared norms.
-        let norm_sq_sum: f64 = s.iter().map(|row| row.iter().map(|&x| x * x).sum::<f64>()).sum();
+        let norm_sq_sum: f64 = s
+            .iter()
+            .map(|row| row.iter().map(|&x| x * x).sum::<f64>())
+            .sum();
         assert!(
             (trace - norm_sq_sum).abs() < 1e-9,
             "trace = {trace}, norm_sq_sum = {norm_sq_sum}"
@@ -555,11 +551,7 @@ mod tests {
             vec![0.0, 5.0, 0.0],
             vec![4.0, 0.0, 1.0],
         ];
-        let s_perm = vec![
-            s_orig[2].clone(),
-            s_orig[0].clone(),
-            s_orig[1].clone(),
-        ];
+        let s_perm = vec![s_orig[2].clone(), s_orig[0].clone(), s_orig[1].clone()];
         let a1 = analyze_redundancy(&s_orig).unwrap();
         let a2 = analyze_redundancy(&s_perm).unwrap();
         for (e1, e2) in a1.eigenvalues.iter().zip(a2.eigenvalues.iter()) {
@@ -727,8 +719,8 @@ mod tests {
         // Two objectives with very different magnitudes.
         // The larger one dominates the variance.
         let s = vec![
-            vec![1.0, 0.0],   // ||s_0|| = 1
-            vec![0.0, 0.01],  // ||s_1|| = 0.01
+            vec![1.0, 0.0],  // ||s_0|| = 1
+            vec![0.0, 0.01], // ||s_1|| = 0.01
         ];
         let a = analyze_redundancy(&s).unwrap();
 

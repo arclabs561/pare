@@ -1,5 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use pare::{pareto_indices, pareto_indices_2d, pareto_indices_k_dominance, Direction, ParetoFrontier};
+use pare::{
+    pareto_indices, pareto_indices_2d, pareto_indices_k_dominance, Direction, ParetoFrontier,
+};
 use rand::prelude::*;
 
 fn bench_pareto(c: &mut Criterion) {

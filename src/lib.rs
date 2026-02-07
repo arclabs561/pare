@@ -4,6 +4,8 @@
 //! supporting maximization/minimization per dimension and crowding distance
 //! for diversity maintenance.
 
+#![warn(missing_docs)]
+
 use std::cmp::Ordering;
 
 use thiserror::Error;
@@ -34,13 +36,18 @@ pub struct Point<V> {
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NormalizationStats {
+    /// Population mean of the values.
     pub mean: f64,
+    /// Population standard deviation (divides by `n`, not `n-1`).
     pub std: f64,
+    /// Minimum observed value.
     pub min: f64,
+    /// Maximum observed value.
     pub max: f64,
 }
 
 impl NormalizationStats {
+    /// Compute normalization statistics from a slice of values.
     pub fn from_values(values: &[f64]) -> Self {
         if values.is_empty() {
             return Self::default();
@@ -81,7 +88,12 @@ pub enum FrontierError {
     InconsistentDimensions,
     /// A value was NaN or infinite.
     #[error("point value at [{point_idx}][{dim_idx}] is not finite")]
-    NonFinite { point_idx: usize, dim_idx: usize },
+    NonFinite {
+        /// Index of the point containing the non-finite value.
+        point_idx: usize,
+        /// Index of the dimension containing the non-finite value.
+        dim_idx: usize,
+    },
 }
 
 impl<V> ParetoFrontier<V> {
@@ -98,8 +110,18 @@ impl<V> ParetoFrontier<V> {
     }
 
     /// Set labels for objectives (e.g. ["accuracy", "latency"]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `labels.len() != directions.len()`.
     pub fn with_labels(mut self, labels: Vec<String>) -> Self {
-        debug_assert_eq!(labels.len(), self.directions.len());
+        assert_eq!(
+            labels.len(),
+            self.directions.len(),
+            "labels len ({}) must match directions len ({})",
+            labels.len(),
+            self.directions.len(),
+        );
         self.labels = labels;
         self
     }
@@ -125,14 +147,32 @@ impl<V> ParetoFrontier<V> {
         &self.points
     }
 
-    /// Mutable access to points (use with caution).
-    pub fn points_mut(&mut self) -> &mut Vec<Point<V>> {
+    /// Mutable access to points.
+    ///
+    /// **Invariant warning:** callers may modify point data/values but must not introduce
+    /// dominated points. Structural mutations (push/remove) that could violate the
+    /// non-dominance invariant should go through [`push`](Self::push) instead.
+    pub fn points_mut(&mut self) -> &mut [Point<V>] {
         &mut self.points
     }
 
     /// Add a point to the frontier if it is non-dominated.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values.len() != directions.len()` or any value is NaN/infinite.
     pub fn push(&mut self, values: Vec<f64>, data: V) -> bool {
-        debug_assert_eq!(values.len(), self.directions.len());
+        assert_eq!(
+            values.len(),
+            self.directions.len(),
+            "values len ({}) must match directions len ({})",
+            values.len(),
+            self.directions.len(),
+        );
+        assert!(
+            values.iter().all(|v| v.is_finite()),
+            "all values must be finite (no NaN or Inf)",
+        );
 
         // Check if any existing point dominates the new point.
         for existing in &self.points {
@@ -166,7 +206,22 @@ impl<V> ParetoFrontier<V> {
     /// normalization, which means scores are **not stable across different frontier snapshots**.
     /// If you need stable scores, normalize objectives against fixed (static) bounds before
     /// insertion and use uniform weights on the pre-normalized values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `point_idx >= len()` or `weights.len() > directions.len()`.
     pub fn scalar_score(&self, point_idx: usize, weights: &[f64]) -> f64 {
+        assert!(
+            point_idx < self.points.len(),
+            "point_idx ({point_idx}) out of bounds (len={})",
+            self.points.len(),
+        );
+        assert!(
+            weights.len() <= self.directions.len(),
+            "weights len ({}) exceeds directions len ({})",
+            weights.len(),
+            self.directions.len(),
+        );
         let p = &self.points[point_idx];
         let mut score = 0.0;
         let mut w_sum = 0.0;
@@ -273,7 +328,12 @@ impl<V> ParetoFrontier<V> {
         if dim == 0 || self.is_empty() {
             return 0.0;
         }
-        debug_assert_eq!(ref_point.len(), dim);
+        assert_eq!(
+            ref_point.len(),
+            dim,
+            "ref_point len ({}) must match directions len ({dim})",
+            ref_point.len(),
+        );
 
         // Convert to an oriented, all-maximize coordinate system rooted at `ref_point`.
         // For each dimension, we measure "improvement over reference", clamped at 0.
