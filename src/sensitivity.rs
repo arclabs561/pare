@@ -324,18 +324,27 @@ where
 {
     let n = mu.len();
     let m = objectives.len();
-    let base_values: Vec<f64> = objectives.iter().map(|f| f(mu)).collect();
 
+    // Central differences: (f(x+h) - f(x-h)) / 2h.
+    // O(eps^2) error vs O(eps) for one-sided.  Costs 2*n*m evaluations
+    // (vs n*m + m for one-sided) but the matrices are small.
     let mut jacobian = vec![vec![0.0; n]; m];
     let mut perturbed = mu.to_vec();
 
     for j in 0..n {
         let old = perturbed[j];
+
         perturbed[j] = old + eps;
-        for (i, f) in objectives.iter().enumerate() {
-            jacobian[i][j] = (f(&perturbed) - base_values[i]) / eps;
-        }
+        let fwd: Vec<f64> = objectives.iter().map(|f| f(&perturbed)).collect();
+
+        perturbed[j] = old - eps;
+        let bwd: Vec<f64> = objectives.iter().map(|f| f(&perturbed)).collect();
+
         perturbed[j] = old;
+
+        for i in 0..m {
+            jacobian[i][j] = (fwd[i] - bwd[i]) / (2.0 * eps);
+        }
     }
 
     jacobian
