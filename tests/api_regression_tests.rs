@@ -184,11 +184,7 @@ fn pareto_indices_basic() {
 #[test]
 fn pareto_indices_2d_basic() {
     use pare::pareto_indices_2d;
-    let points = vec![
-        vec![1.0f32, 0.0],
-        vec![0.0, 1.0],
-        vec![0.5, 0.5],
-    ];
+    let points = vec![vec![1.0f32, 0.0], vec![0.0, 1.0], vec![0.5, 0.5]];
     let idx = pareto_indices_2d(&points).unwrap();
     assert_eq!(idx.len(), 3); // all non-dominated
 }
