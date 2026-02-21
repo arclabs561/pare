@@ -252,6 +252,65 @@ impl<V> ParetoFrontier<V> {
         }
     }
 
+    /// Like [`scalar_score`][Self::scalar_score], but normalizes against caller-supplied bounds
+    /// instead of the frontier's current min/max.
+    ///
+    /// This avoids the instability where adding a new arm to the frontier changes the
+    /// normalized score of every existing arm.  Callers supply `bounds[i] = (min_i, max_i)`;
+    /// values outside the range are clamped.  If `min == max` for a dimension, that
+    /// dimension contributes `0` to the score.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    /// f.push(vec![0.9, 10.0], "a");
+    /// f.push(vec![0.7, 5.0],  "b");
+    ///
+    /// // ok_rate ∈ [0,1], cost ∈ [0,100]
+    /// let bounds = vec![(0.0_f64, 1.0_f64), (0.0_f64, 100.0_f64)];
+    /// let s0 = f.scalar_score_static(0, &[1.0, 1.0], &bounds);
+    /// let s1 = f.scalar_score_static(1, &[1.0, 1.0], &bounds);
+    /// assert!(s0 > s1, "arm a should score higher: better ok_rate, lower cost");
+    /// ```
+    pub fn scalar_score_static(
+        &self,
+        point_idx: usize,
+        weights: &[f64],
+        bounds: &[(f64, f64)],
+    ) -> f64 {
+        assert!(
+            point_idx < self.points.len(),
+            "point_idx ({point_idx}) out of bounds (len={})",
+            self.points.len(),
+        );
+        let p = &self.points[point_idx];
+        let dims = p.values.len().min(weights.len()).min(bounds.len());
+        let mut score = 0.0;
+        let mut w_sum = 0.0;
+
+        for i in 0..dims {
+            let (lo, hi) = bounds[i];
+            let w = weights[i];
+            let range = hi - lo;
+            let norm = if range.abs() > self.eps {
+                ((p.values[i] - lo) / range).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let oriented = match self.directions[i] {
+                Direction::Maximize => norm,
+                Direction::Minimize => 1.0 - norm,
+            };
+            score += oriented * w;
+            w_sum += w;
+        }
+
+        if w_sum > 0.0 { score / w_sum } else { 0.0 }
+    }
+
     /// Find the index of the point with the highest weighted scalar score.
     pub fn best_index(&self, weights: &[f64]) -> Option<usize> {
         if self.is_empty() {
