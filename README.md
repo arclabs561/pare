@@ -1,5 +1,9 @@
 # pare
 
+[![crates.io](https://img.shields.io/crates/v/pare.svg)](https://crates.io/crates/pare)
+[![Documentation](https://docs.rs/pare/badge.svg)](https://docs.rs/pare)
+[![CI](https://github.com/arclabs561/pare/actions/workflows/ci.yml/badge.svg)](https://github.com/arclabs561/pare/actions/workflows/ci.yml)
+
 Pareto frontier and skyline query primitives for multi-objective optimization.
 Efficiently filters sets of items to find non-dominated candidates across multiple metrics.
 
