@@ -308,7 +308,11 @@ impl<V> ParetoFrontier<V> {
             w_sum += w;
         }
 
-        if w_sum > 0.0 { score / w_sum } else { 0.0 }
+        if w_sum > 0.0 {
+            score / w_sum
+        } else {
+            0.0
+        }
     }
 
     /// Find the index of the point with the highest weighted scalar score.
