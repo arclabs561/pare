@@ -7,6 +7,8 @@ description = "Pareto frontier and skyline queries"
 repository = "https://github.com/arclabs561/pare"
 homepage = "https://github.com/arclabs561/pare"
 documentation = "https://docs.rs/pare"
+readme = "README.md"
+rust-version = "1.75"
 keywords = ["pareto", "frontier", "skyline"]
 categories = ["algorithms", "mathematics", "science"]
 
