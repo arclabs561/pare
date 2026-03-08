@@ -59,7 +59,96 @@ proptest! {
     }
 }
 
-// Brute-force cross-check: keep cases modest (O(n^2) per case).
+// Cross-check: pareto_indices_2d (O(n log n) sweep) vs pareto_indices (O(n^2) general).
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 128, .. ProptestConfig::default() })]
+
+    #[test]
+    fn test_pareto_indices_2d_matches_naive(
+        values in prop::collection::vec(prop::collection::vec(0.0f32..1.0, 2..=2), 1..100)
+    ) {
+        let idx_naive = pare::pareto_indices(&values).unwrap();
+        let idx_2d = pare::pareto_indices_2d(&values).unwrap();
+
+        let set_naive: std::collections::BTreeSet<usize> = idx_naive.into_iter().collect();
+        let set_2d: std::collections::BTreeSet<usize> = idx_2d.into_iter().collect();
+
+        prop_assert_eq!(set_naive, set_2d,
+            "pareto_indices and pareto_indices_2d disagree");
+    }
+}
+
+// 3D hypervolume monotonicity (exercises recursive slicing path).
+proptest! {
+    #[test]
+    fn test_hypervolume_monotone_3d(values in prop::collection::vec(prop::collection::vec(0.0..1.0, 3), 1..40)) {
+        let mut frontier = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize, Direction::Maximize]);
+        let ref_point = [0.0, 0.0, 0.0];
+        let mut prev = 0.0;
+
+        for (i, v) in values.into_iter().enumerate() {
+            frontier.push(v, i);
+            let hv = frontier.hypervolume(&ref_point);
+            assert!(hv >= -1e-9, "hypervolume must be non-negative");
+            assert!(hv + 1e-9 >= prev, "hypervolume must be monotone (prev={prev}, hv={hv})");
+            assert!(hv <= 1.0 + 1e-9, "hypervolume must be <= 1 in [0,1]^3 (hv={hv})");
+            prev = hv;
+        }
+    }
+}
+
+// 3D hypervolume grid cross-check: compare exact recursive slicing against
+// brute-force grid sampling. Small point sets + coarse grid keep this fast.
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 32, .. ProptestConfig::default() })]
+
+    #[test]
+    fn test_hypervolume_3d_grid_crosscheck(values in prop::collection::vec(prop::collection::vec(0.0..1.0, 3), 1..10)) {
+        let mut frontier = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize, Direction::Maximize]);
+        for (i, v) in values.into_iter().enumerate() {
+            frontier.push(v, i);
+        }
+        let ref_point = [0.0, 0.0, 0.0];
+        let exact_hv = frontier.hypervolume(&ref_point);
+
+        // Brute-force grid approximation: sample a 20^3 grid in [0,1]^3.
+        let res = 20usize;
+        let step = 1.0 / res as f64;
+        let cell_vol = step * step * step;
+        let mut dominated_count = 0usize;
+
+        let points = frontier.points();
+        for ix in 0..res {
+            let x = (ix as f64 + 0.5) * step;
+            for iy in 0..res {
+                let y = (iy as f64 + 0.5) * step;
+                for iz in 0..res {
+                    let z = (iz as f64 + 0.5) * step;
+                    // A grid cell center is "dominated" if some frontier point
+                    // is >= in all coordinates (maximize).
+                    let dom = points.iter().any(|p| {
+                        p.values[0] >= x && p.values[1] >= y && p.values[2] >= z
+                    });
+                    if dom {
+                        dominated_count += 1;
+                    }
+                }
+            }
+        }
+
+        let approx_hv = dominated_count as f64 * cell_vol;
+        // With a 20^3 grid the max discretization error is bounded by
+        // surface_area * step. For small frontier sets in [0,1]^3 this stays
+        // well within 0.1.
+        let tol = 0.1;
+        assert!(
+            (exact_hv - approx_hv).abs() < tol,
+            "exact {exact_hv} vs grid approx {approx_hv} differ by more than {tol}"
+        );
+    }
+}
+
+// Brute-force Pareto membership cross-check: keep cases modest (O(n^2) per case).
 proptest! {
     #![proptest_config(ProptestConfig { cases: 64, .. ProptestConfig::default() })]
 

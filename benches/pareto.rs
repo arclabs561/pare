@@ -70,6 +70,62 @@ fn bench_pareto(c: &mut Criterion) {
     });
 
     group.finish();
+
+    // Hypervolume benchmarks.
+    let mut hv_group = c.benchmark_group("hypervolume");
+
+    {
+        let mut frontier_2d = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+        let mut rng2 = StdRng::seed_from_u64(99);
+        for i in 0..100 {
+            let p = vec![rng2.random::<f64>(), rng2.random::<f64>()];
+            frontier_2d.push(p, i);
+        }
+        let ref_2d = [0.0, 0.0];
+        hv_group.bench_function("2d_n100", |b| {
+            b.iter(|| black_box(frontier_2d.hypervolume(black_box(&ref_2d))))
+        });
+    }
+
+    {
+        let mut frontier_3d = ParetoFrontier::new(vec![
+            Direction::Maximize,
+            Direction::Maximize,
+            Direction::Maximize,
+        ]);
+        let mut rng3 = StdRng::seed_from_u64(101);
+        for i in 0..100 {
+            let p = vec![
+                rng3.random::<f64>(),
+                rng3.random::<f64>(),
+                rng3.random::<f64>(),
+            ];
+            frontier_3d.push(p, i);
+        }
+        let ref_3d = [0.0, 0.0, 0.0];
+        hv_group.bench_function("3d_n100", |b| {
+            b.iter(|| black_box(frontier_3d.hypervolume(black_box(&ref_3d))))
+        });
+    }
+
+    hv_group.finish();
+
+    // Crowding distance benchmark.
+    let mut cd_group = c.benchmark_group("crowding_distance");
+
+    {
+        let mut frontier_cd = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+        let mut rng_cd = StdRng::seed_from_u64(77);
+        for i in 0..200 {
+            let p = vec![rng_cd.random::<f64>(), rng_cd.random::<f64>()];
+            frontier_cd.push(p, i);
+        }
+        cd_group.bench_function("2d_n200", |b| {
+            b.iter(|| black_box(frontier_cd.crowding_distances()))
+        });
+    }
+
+    cd_group.finish();
 }
 
 criterion_group!(benches, bench_pareto);

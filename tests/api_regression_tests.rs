@@ -163,6 +163,57 @@ fn push_nan_panics() {
     f.push(vec![f64::NAN], "bad");
 }
 
+// ---- 3D / 4D hypervolume known-value tests ----
+
+#[test]
+fn hypervolume_3d_single_point() {
+    let mut f = ParetoFrontier::new(vec![
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+    ]);
+    f.push(vec![1.0, 1.0, 1.0], ());
+    let hv = f.hypervolume(&[0.0, 0.0, 0.0]);
+    assert!(
+        (hv - 1.0).abs() < 1e-9,
+        "single unit cube should have hv = 1.0, got {hv}"
+    );
+}
+
+#[test]
+fn hypervolume_3d_two_non_dominated_points() {
+    // Two non-dominated points: (1.0, 0.5, 0.5) and (0.5, 1.0, 1.0).
+    // Box 1 volume = 1.0 * 0.5 * 0.5 = 0.25
+    // Box 2 volume = 0.5 * 1.0 * 1.0 = 0.50
+    // Intersection  = min(1,0.5) * min(0.5,1) * min(0.5,1) = 0.5 * 0.5 * 0.5 = 0.125
+    // Union = 0.25 + 0.50 - 0.125 = 0.625
+    let mut f = ParetoFrontier::new(vec![
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+    ]);
+    f.push(vec![1.0, 0.5, 0.5], "a");
+    f.push(vec![0.5, 1.0, 1.0], "b");
+    let hv = f.hypervolume(&[0.0, 0.0, 0.0]);
+    assert!((hv - 0.625).abs() < 1e-9, "expected hv = 0.625, got {hv}");
+}
+
+#[test]
+fn hypervolume_4d_single_point() {
+    let mut f = ParetoFrontier::new(vec![
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+    ]);
+    f.push(vec![1.0, 1.0, 1.0, 1.0], ());
+    let hv = f.hypervolume(&[0.0, 0.0, 0.0, 0.0]);
+    assert!(
+        (hv - 1.0).abs() < 1e-9,
+        "single unit hypercube in 4D should have hv = 1.0, got {hv}"
+    );
+}
+
 // ---- back-compat helpers ----
 
 #[test]
@@ -203,8 +254,43 @@ fn pareto_indices_k_dominance_basic() {
 }
 
 #[test]
+fn dominates_same_length_as_directions() {
+    // Verify correct behavior when all lengths match.
+    let dirs = vec![Direction::Maximize, Direction::Maximize];
+    assert!(dominates(&dirs, 1e-9, &[1.0, 1.0], &[0.5, 0.5]));
+}
+
+#[test]
 fn pareto_indices_empty() {
     use pare::pareto_indices;
     let idx = pareto_indices(&[]).unwrap();
     assert!(idx.is_empty());
+}
+
+#[test]
+fn pareto_indices_rejects_nan() {
+    use pare::pareto_indices;
+    let points = vec![vec![1.0f32, f32::NAN], vec![0.5, 0.5]];
+    assert!(pareto_indices(&points).is_none());
+}
+
+#[test]
+fn pareto_indices_2d_rejects_nan() {
+    use pare::pareto_indices_2d;
+    let points = vec![vec![1.0f32, f32::NAN], vec![0.5, 0.5]];
+    assert!(pareto_indices_2d(&points).is_none());
+}
+
+#[test]
+fn pareto_indices_k_dominance_rejects_nan() {
+    use pare::pareto_indices_k_dominance;
+    let points = vec![vec![1.0f32, f32::NAN], vec![0.5, 0.5]];
+    assert!(pareto_indices_k_dominance(&points, 1).is_none());
+}
+
+#[test]
+fn pareto_indices_rejects_inf() {
+    use pare::pareto_indices;
+    let points = vec![vec![1.0f32, f32::INFINITY], vec![0.5, 0.5]];
+    assert!(pareto_indices(&points).is_none());
 }
