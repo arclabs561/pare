@@ -109,7 +109,10 @@ impl<V> ParetoFrontier<V> {
         }
     }
 
-    /// Set labels for objectives (e.g. ["accuracy", "latency"]).
+    /// Set labels for objectives (e.g. `["accuracy", "latency"]`).
+    ///
+    /// Labels are stored for caller use and can be retrieved with [`labels`](Self::labels).
+    /// They are not used internally by any scoring or dominance method.
     ///
     /// # Panics
     ///
@@ -126,7 +129,37 @@ impl<V> ParetoFrontier<V> {
         self
     }
 
-    /// Set the epsilon for dominance comparisons.
+    /// Get the objective labels.
+    ///
+    /// Returns the labels set by [`with_labels`](Self::with_labels), or default
+    /// numeric labels `["0", "1", ...]` if none were set.
+    pub fn labels(&self) -> &[String] {
+        &self.labels
+    }
+
+    /// Get the optimization directions.
+    pub fn directions(&self) -> &[Direction] {
+        &self.directions
+    }
+
+    /// Set the epsilon tolerance for dominance comparisons.
+    ///
+    /// The epsilon controls how strict dominance checks are:
+    ///
+    /// - Point `a` is considered "strictly better" than `b` in a dimension only
+    ///   if `a > b + eps` (for Maximize) or `a + eps < b` (for Minimize).
+    /// - Point `a` is considered "not worse" than `b` only if `a + eps >= b`
+    ///   (for Maximize) or `a <= b + eps` (for Minimize).
+    ///
+    /// **Larger epsilon** = more tolerance = fewer domination events = larger frontiers.
+    /// **Smaller epsilon** = less tolerance = more domination = smaller frontiers.
+    ///
+    /// The default is `1e-9`, which provides floating-point stability without
+    /// materially changing results for objectives with reasonable magnitude.
+    /// Set to `0.0` for exact comparisons.
+    ///
+    /// This is a *numerical tolerance*, not epsilon-dominance archiving (which
+    /// deliberately coarsens objective space to bound archive size).
     pub fn with_eps(mut self, eps: f64) -> Self {
         self.eps = eps;
         self
@@ -656,6 +689,9 @@ fn hypervolume_max_2d(points: &[Vec<f64>], eps: f64) -> f64 {
 /// Returns `true` if point `a` dominates point `b` (at least as good in all
 /// dimensions and strictly better in at least one).
 ///
+/// `a`, `b`, and `directions` must all have the same length; mismatched lengths
+/// cause a panic in debug builds and silent truncation in release builds.
+///
 /// ```
 /// use pare::{dominates, Direction};
 ///
@@ -664,6 +700,20 @@ fn hypervolume_max_2d(points: &[Vec<f64>], eps: f64) -> f64 {
 /// assert!(!dominates(&dirs, 1e-9, &[0.9, 0.3], &[0.5, 0.5])); // trade-off
 /// ```
 pub fn dominates(directions: &[Direction], eps: f64, a: &[f64], b: &[f64]) -> bool {
+    debug_assert_eq!(
+        a.len(),
+        b.len(),
+        "dominates: a.len() ({}) != b.len() ({})",
+        a.len(),
+        b.len()
+    );
+    debug_assert_eq!(
+        a.len(),
+        directions.len(),
+        "dominates: a.len() ({}) != directions.len() ({})",
+        a.len(),
+        directions.len()
+    );
     let mut strictly_better = false;
     for (i, (&av, &bv)) in a.iter().zip(b.iter()).enumerate() {
         let dir = directions[i];
@@ -722,6 +772,10 @@ pub fn pareto_indices(points: &[Vec<f32>]) -> Option<Vec<usize>> {
     if d == 0 || points.iter().any(|p| p.len() != d) {
         return None;
     }
+    // Check for non-finite values.
+    if points.iter().any(|p| p.iter().any(|v| !v.is_finite())) {
+        return None;
+    }
 
     let directions = vec![Direction::Maximize; d];
     let eps = 1e-9;
@@ -765,6 +819,10 @@ pub fn pareto_indices_2d(points: &[Vec<f32>]) -> Option<Vec<usize>> {
     if points.iter().any(|p| p.len() != 2) {
         return pareto_indices(points);
     }
+    // Check for non-finite values.
+    if points.iter().any(|p| p.iter().any(|v| !v.is_finite())) {
+        return None;
+    }
 
     // Sort by x descending, then y descending.
     let mut idxs: Vec<usize> = (0..points.len()).collect();
@@ -802,6 +860,10 @@ pub fn pareto_indices_k_dominance(points: &[Vec<f32>], k: usize) -> Option<Vec<u
     }
     let d = points[0].len();
     if d == 0 || points.iter().any(|p| p.len() != d) {
+        return None;
+    }
+    // Check for non-finite values.
+    if points.iter().any(|p| p.iter().any(|v| !v.is_finite())) {
         return None;
     }
     let k = k.min(d);

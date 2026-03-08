@@ -50,8 +50,11 @@
 //! for M covariate cells).  You can name 17 objectives, but if your design has 3
 //! degrees of freedom, at most 4 can be simultaneously non-redundant.
 //!
-//! References: Ehrgott & Nickel 2002 (Helly's theorem applied to Pareto optimality),
-//! Zhen et al. 2018 (degenerate Pareto fronts from functional dependence).
+//! References:
+//! - Brockhoff & Zitzler 2006, "Are All Objectives Necessary?" (PPSN IX) --
+//!   rigorous definitions of objective conflict and redundancy conditions.
+//! - Ehrgott & Nickel 2002 (Helly's theorem applied to Pareto optimality).
+//! - Zhen et al. 2018 (degenerate Pareto fronts from functional dependence).
 //!
 //! # Average-case vs. worst-case detection
 //!
