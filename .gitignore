@@ -3,4 +3,6 @@
 
 # Local editor/agent config (keep repo clean)
 .cursor/
+.claude/reports/
+.claude/enrich-report*.md
 .DS_Store
