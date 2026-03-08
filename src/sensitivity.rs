@@ -255,6 +255,12 @@ pub fn analyze_redundancy(sensitivities: &[SensitivityRow]) -> Option<Redundancy
     if n == 0 || sensitivities.iter().any(|r| r.len() != n) {
         return None;
     }
+    if sensitivities
+        .iter()
+        .any(|r| r.iter().any(|v| !v.is_finite()))
+    {
+        return None;
+    }
 
     // Compute Gram matrix G[i][j] = <s_i, s_j> = sum_k s_i(k) * s_j(k).
     // G is m x m, symmetric, and positive semidefinite (it's S * S^T).
@@ -325,6 +331,7 @@ pub fn finite_difference_jacobian<F>(mu: &[f64], objectives: &[F], eps: f64) -> 
 where
     F: Fn(&[f64]) -> f64,
 {
+    assert!(eps > 0.0, "eps must be positive, got {eps}");
     let n = mu.len();
     let m = objectives.len();
 
@@ -885,5 +892,24 @@ mod tests {
         let jac = finite_difference_jacobian(&mu, &objectives, 1e-7);
         assert!((jac[0][0] - 6.0).abs() < 1e-3, "J[0][0] = {}", jac[0][0]);
         assert!((jac[0][1] - 8.0).abs() < 1e-3, "J[0][1] = {}", jac[0][1]);
+    }
+
+    #[test]
+    fn nan_input_returns_none() {
+        let s = vec![vec![1.0, f64::NAN, 3.0], vec![4.0, 5.0, 6.0]];
+        assert!(analyze_redundancy(&s).is_none());
+    }
+
+    #[test]
+    fn inf_input_returns_none() {
+        let s = vec![vec![1.0, 2.0], vec![f64::INFINITY, 1.0]];
+        assert!(analyze_redundancy(&s).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "eps must be positive")]
+    fn finite_difference_jacobian_zero_eps_panics() {
+        let f = |x: &[f64]| x[0];
+        finite_difference_jacobian(&[1.0], &[f], 0.0);
     }
 }
