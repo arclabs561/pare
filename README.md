@@ -100,6 +100,14 @@ let analysis = analyze_redundancy(&jac).unwrap();
 // analysis.redundant_pairs -- objectives that move together
 ```
 
+## Examples
+
+[**sensitivity_analysis.rs**](examples/sensitivity_analysis.rs) -- Multi-objective sensitivity analysis for a simulated 3-arm experiment with 9 covariate cells and 6 objectives. Builds a finite-difference Jacobian across the full parameter space, computes the eigenvalue spectrum to find how many objectives actually matter (effective dimensionality), identifies redundant pairs via cosine similarity, and reports which objectives can be dropped without losing decision power. Useful when you suspect your objective set is over-specified.
+
+```bash
+cargo run --example sensitivity_analysis
+```
+
 For background on dominance, crowding distance, and hypervolume, see
 [`TECHNICAL_BACKGROUND.md`](TECHNICAL_BACKGROUND.md).
 
