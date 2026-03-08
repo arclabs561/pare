@@ -158,6 +158,19 @@ impl<V> ParetoFrontier<V> {
 
     /// Add a point to the frontier if it is non-dominated.
     ///
+    /// Returns `true` if the point was added (non-dominated), `false` if it was
+    /// dominated by an existing point.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// assert!(f.push(vec![0.9, 0.1], "a"));   // added
+    /// assert!(f.push(vec![0.1, 0.9], "b"));   // added (trade-off)
+    /// assert!(!f.push(vec![0.5, 0.05], "c"));  // dominated by "a"
+    /// assert_eq!(f.len(), 2);
+    /// ```
+    ///
     /// # Panics
     ///
     /// Panics if `values.len() != directions.len()` or any value is NaN/infinite.
@@ -333,6 +346,23 @@ impl<V> ParetoFrontier<V> {
     }
 
     /// Compute crowding distances for all points on the frontier (NSGA-II style).
+    ///
+    /// Boundary points get `f64::INFINITY`. Interior points get a finite score
+    /// proportional to the spacing around them.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// f.push(vec![0.0, 1.0], "a");
+    /// f.push(vec![0.5, 0.5], "b");
+    /// f.push(vec![1.0, 0.0], "c");
+    ///
+    /// let cd = f.crowding_distances();
+    /// assert!(cd[0].is_infinite()); // boundary
+    /// assert!(cd[2].is_infinite()); // boundary
+    /// assert!(cd[1].is_finite());   // interior
+    /// ```
     pub fn crowding_distances(&self) -> Vec<f64> {
         let n = self.points.len();
         if n == 0 {
@@ -386,6 +416,17 @@ impl<V> ParetoFrontier<V> {
     ///
     /// For mixed maximize/minimize objectives, `ref_point` is interpreted in the original
     /// objective units (this method handles the orientation internally).
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// f.push(vec![1.0, 1.0], ());
+    ///
+    /// // Hypervolume relative to origin: 1.0 * 1.0 = 1.0
+    /// let hv = f.hypervolume(&[0.0, 0.0]);
+    /// assert!((hv - 1.0).abs() < 1e-6);
+    /// ```
     pub fn hypervolume(&self, ref_point: &[f64]) -> f64 {
         let dim = self.directions.len();
         if dim == 0 || self.is_empty() {
@@ -611,6 +652,17 @@ fn hypervolume_max_2d(points: &[Vec<f64>], eps: f64) -> f64 {
 }
 
 /// Standalone dominance check.
+///
+/// Returns `true` if point `a` dominates point `b` (at least as good in all
+/// dimensions and strictly better in at least one).
+///
+/// ```
+/// use pare::{dominates, Direction};
+///
+/// let dirs = vec![Direction::Maximize, Direction::Maximize];
+/// assert!(dominates(&dirs, 1e-9, &[0.9, 0.8], &[0.5, 0.5]));
+/// assert!(!dominates(&dirs, 1e-9, &[0.9, 0.3], &[0.5, 0.5])); // trade-off
+/// ```
 pub fn dominates(directions: &[Direction], eps: f64, a: &[f64], b: &[f64]) -> bool {
     let mut strictly_better = false;
     for (i, (&av, &bv)) in a.iter().zip(b.iter()).enumerate() {
@@ -645,6 +697,23 @@ pub fn dominates(directions: &[Direction], eps: f64, a: &[f64], b: &[f64]) -> bo
 ///
 /// This is a convenience wrapper intended for benchmarks and legacy code.
 /// The canonical API is [`ParetoFrontier`].
+///
+/// ```
+/// use pare::pareto_indices;
+///
+/// let points = vec![
+///     vec![0.9f32, 0.1],
+///     vec![0.5, 0.5],
+///     vec![0.1, 0.9],
+///     vec![0.4, 0.4], // dominated by [0.5, 0.5]
+/// ];
+///
+/// let front = pareto_indices(&points).unwrap();
+/// assert!(front.contains(&0));
+/// assert!(front.contains(&1));
+/// assert!(front.contains(&2));
+/// assert!(!front.contains(&3)); // dominated
+/// ```
 pub fn pareto_indices(points: &[Vec<f32>]) -> Option<Vec<usize>> {
     if points.is_empty() {
         return Some(Vec::new());
