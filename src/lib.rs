@@ -165,6 +165,16 @@ impl<V> ParetoFrontier<V> {
         self
     }
 
+    /// Get the current epsilon tolerance.
+    pub fn eps(&self) -> f64 {
+        self.eps
+    }
+
+    /// Get the normalization statistics for each objective.
+    pub fn stats(&self) -> &[NormalizationStats] {
+        &self.stats
+    }
+
     /// Number of points currently on the frontier.
     pub fn len(&self) -> usize {
         self.points.len()
@@ -439,6 +449,324 @@ impl<V> ParetoFrontier<V> {
         distances
     }
 
+    /// The ideal point: best observed value per objective on the frontier.
+    ///
+    /// For Maximize objectives, this is the maximum; for Minimize, the minimum.
+    /// Returns `None` if the frontier is empty.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    /// f.push(vec![0.9, 10.0], "a");
+    /// f.push(vec![0.7, 5.0],  "b");
+    ///
+    /// let ideal = f.ideal_point().unwrap();
+    /// assert!((ideal[0] - 0.9).abs() < 1e-9);  // best accuracy
+    /// assert!((ideal[1] - 5.0).abs() < 1e-9);   // best (lowest) latency
+    /// ```
+    pub fn ideal_point(&self) -> Option<Vec<f64>> {
+        if self.is_empty() {
+            return None;
+        }
+        Some(
+            (0..self.directions.len())
+                .map(|i| {
+                    let vals = self.points.iter().map(|p| p.values[i]);
+                    match self.directions[i] {
+                        Direction::Maximize => vals.fold(f64::NEG_INFINITY, f64::max),
+                        Direction::Minimize => vals.fold(f64::INFINITY, f64::min),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// The nadir point: worst observed value per objective on the frontier.
+    ///
+    /// For Maximize objectives, this is the minimum; for Minimize, the maximum.
+    /// Returns `None` if the frontier is empty.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    /// f.push(vec![0.9, 10.0], "a");
+    /// f.push(vec![0.7, 5.0],  "b");
+    ///
+    /// let nadir = f.nadir_point().unwrap();
+    /// assert!((nadir[0] - 0.7).abs() < 1e-9);  // worst accuracy
+    /// assert!((nadir[1] - 10.0).abs() < 1e-9);  // worst (highest) latency
+    /// ```
+    pub fn nadir_point(&self) -> Option<Vec<f64>> {
+        if self.is_empty() {
+            return None;
+        }
+        Some(
+            (0..self.directions.len())
+                .map(|i| {
+                    let vals = self.points.iter().map(|p| p.values[i]);
+                    match self.directions[i] {
+                        Direction::Maximize => vals.fold(f64::INFINITY, f64::min),
+                        Direction::Minimize => vals.fold(f64::NEG_INFINITY, f64::max),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// Normalized objective values for a point, mapped to `[0, 1]`.
+    ///
+    /// Each dimension is normalized using the frontier's ideal and nadir points:
+    /// `0.0` = nadir (worst on the frontier), `1.0` = ideal (best on the frontier).
+    /// Direction is accounted for: both Maximize and Minimize objectives produce
+    /// values where higher = better after normalization.
+    ///
+    /// Returns `None` if the frontier is empty. Returns `0.5` for dimensions
+    /// where ideal == nadir (no spread).
+    ///
+    /// This is the normalization that ASF and other MCDM methods assume.
+    /// For feeding normalized data to downstream systems (visualization, export),
+    /// these values are unit-free and directly comparable across objectives.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    /// f.push(vec![0.9, 10.0], "a");  // best accuracy, worst latency
+    /// f.push(vec![0.7, 5.0],  "b");  // worst accuracy, best latency
+    ///
+    /// let norm_a = f.normalized_values(0).unwrap();
+    /// assert!((norm_a[0] - 1.0).abs() < 1e-9);  // best in dim 0
+    /// assert!((norm_a[1] - 0.0).abs() < 1e-9);  // worst in dim 1
+    ///
+    /// let norm_b = f.normalized_values(1).unwrap();
+    /// assert!((norm_b[0] - 0.0).abs() < 1e-9);  // worst in dim 0
+    /// assert!((norm_b[1] - 1.0).abs() < 1e-9);  // best in dim 1
+    /// ```
+    pub fn normalized_values(&self, point_idx: usize) -> Option<Vec<f64>> {
+        if self.is_empty() {
+            return None;
+        }
+        assert!(
+            point_idx < self.points.len(),
+            "point_idx ({point_idx}) out of bounds (len={})",
+            self.points.len(),
+        );
+        let ideal = self.ideal_point()?;
+        let nadir = self.nadir_point()?;
+        let p = &self.points[point_idx];
+
+        Some(
+            (0..self.directions.len())
+                .map(|i| {
+                    let range = (ideal[i] - nadir[i]).abs();
+                    if range < self.eps {
+                        return 0.5;
+                    }
+                    match self.directions[i] {
+                        Direction::Maximize => (p.values[i] - nadir[i]) / range,
+                        Direction::Minimize => (nadir[i] - p.values[i]) / range,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// Suggest a reference point for hypervolume computation.
+    ///
+    /// Returns the nadir point shifted outward by a margin (default: 10% of
+    /// the objective range per dimension). This follows the standard practice
+    /// from Guerreiro et al. (2021): choose a point "clearly worse than
+    /// acceptable" as the reference.
+    ///
+    /// The margin prevents zero-volume contributions from boundary points.
+    /// Use the same reference point across runs for comparable hypervolume values.
+    ///
+    /// Returns `None` if the frontier is empty.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    /// f.push(vec![0.9, 10.0], ());
+    /// f.push(vec![0.7, 5.0],  ());
+    ///
+    /// let ref_pt = f.suggest_ref_point(0.1).unwrap();
+    /// // For Maximize: nadir - margin * range = 0.7 - 0.1 * 0.2 = 0.68
+    /// // For Minimize: nadir + margin * range = 10.0 + 0.1 * 5.0 = 10.5
+    /// let hv = f.hypervolume(&ref_pt);
+    /// assert!(hv > 0.0);
+    /// ```
+    pub fn suggest_ref_point(&self, margin: f64) -> Option<Vec<f64>> {
+        if self.is_empty() {
+            return None;
+        }
+        let ideal = self.ideal_point()?;
+        let nadir = self.nadir_point()?;
+
+        Some(
+            (0..self.directions.len())
+                .map(|i| {
+                    let range = (ideal[i] - nadir[i]).abs();
+                    let shift = margin * range;
+                    match self.directions[i] {
+                        // Nadir is the worst; shift further in the "worse" direction
+                        Direction::Maximize => nadir[i] - shift,
+                        Direction::Minimize => nadir[i] + shift,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// Return all frontier point indices sorted by descending weighted score.
+    ///
+    /// This is the ranked version of [`best_index`](Self::best_index): instead of
+    /// returning only the top-scoring point, it returns all points ordered from
+    /// best to worst according to the weighted linear score.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// f.push(vec![0.9, 0.1], "A");
+    /// f.push(vec![0.5, 0.5], "B");
+    /// f.push(vec![0.1, 0.9], "C");
+    ///
+    /// let ranked = f.ranked_indices(&[1.0, 0.0]); // only care about dim 0
+    /// assert_eq!(ranked[0], 0); // A wins
+    /// assert_eq!(ranked[2], 2); // C last
+    /// ```
+    pub fn ranked_indices(&self, weights: &[f64]) -> Vec<usize> {
+        let mut indices: Vec<usize> = (0..self.points.len()).collect();
+        indices.sort_by(|&a, &b| {
+            let sa = self.scalar_score(a, weights);
+            let sb = self.scalar_score(b, weights);
+            sb.partial_cmp(&sa).unwrap_or(Ordering::Equal)
+        });
+        indices
+    }
+
+    /// Achievement Scalarizing Function (ASF) score for a point.
+    ///
+    /// ASF is the standard MCDM method for selecting a point on the Pareto front
+    /// closest to an ideal direction. Unlike weighted-sum scoring, ASF works on
+    /// non-convex fronts.
+    ///
+    /// $$
+    /// \text{ASF}(f, w, z^*) = \max_i \frac{f_i' - z_i^{*\prime}}{w_i}
+    /// $$
+    ///
+    /// where primed values are oriented so that lower is better (Minimize directions
+    /// are kept as-is; Maximize directions are negated). The point with the
+    /// **lowest** ASF value is the best compromise.
+    ///
+    /// `ideal` should be the ideal point (use [`ideal_point`](Self::ideal_point)).
+    /// Weights control the preferred tradeoff direction; equal weights give equal
+    /// importance to all objectives.
+    ///
+    /// Returns `f64::INFINITY` if any weight is zero (division by zero).
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    /// f.push(vec![0.9, 10.0], "a");
+    /// f.push(vec![0.7, 5.0],  "b");
+    ///
+    /// let ideal = f.ideal_point().unwrap();
+    /// let sa = f.asf(0, &[1.0, 1.0], &ideal);
+    /// let sb = f.asf(1, &[1.0, 1.0], &ideal);
+    /// // Both are on the front; scores depend on distance from ideal
+    /// assert!(sa >= 0.0);
+    /// assert!(sb >= 0.0);
+    /// ```
+    pub fn asf(&self, point_idx: usize, weights: &[f64], ideal: &[f64]) -> f64 {
+        assert!(
+            point_idx < self.points.len(),
+            "point_idx ({point_idx}) out of bounds (len={})",
+            self.points.len(),
+        );
+        let p = &self.points[point_idx];
+        let dims = p.values.len().min(weights.len()).min(ideal.len());
+        let mut max_val = f64::NEG_INFINITY;
+        for i in 0..dims {
+            let w = weights[i];
+            if w.abs() < 1e-30 {
+                return f64::INFINITY;
+            }
+            // Orient so lower is better
+            let (fi, zi) = match self.directions[i] {
+                Direction::Maximize => (-p.values[i], -ideal[i]),
+                Direction::Minimize => (p.values[i], ideal[i]),
+            };
+            let val = (fi - zi) / w;
+            if val > max_val {
+                max_val = val;
+            }
+        }
+        max_val
+    }
+
+    /// Find the index of the point with the lowest ASF score (best compromise).
+    ///
+    /// This is the MCDM selection method: given weights expressing your preference
+    /// direction and the ideal point, returns the frontier point closest to that
+    /// ideal along the weighted direction.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// f.push(vec![0.9, 0.1], "A");
+    /// f.push(vec![0.5, 0.5], "B");
+    /// f.push(vec![0.1, 0.9], "C");
+    ///
+    /// let ideal = f.ideal_point().unwrap();
+    /// let best = f.best_asf(&[1.0, 1.0], &ideal).unwrap();
+    /// // B is the most balanced point
+    /// assert_eq!(f.points()[best].data, "B");
+    /// ```
+    pub fn best_asf(&self, weights: &[f64], ideal: &[f64]) -> Option<usize> {
+        if self.is_empty() {
+            return None;
+        }
+        (0..self.points.len()).min_by(|&a, &b| {
+            let sa = self.asf(a, weights, ideal);
+            let sb = self.asf(b, weights, ideal);
+            sa.partial_cmp(&sb).unwrap_or(Ordering::Equal)
+        })
+    }
+
+    /// Remove points that do not satisfy a predicate, then recompute stats.
+    ///
+    /// This is useful for applying post-hoc constraints (e.g., budget limits)
+    /// to a frontier without rebuilding it from scratch.
+    ///
+    /// **Warning:** after `retain`, the remaining points are still mutually
+    /// non-dominated (removing points cannot create new dominance relationships),
+    /// but they may no longer form the Pareto front of the original candidate set.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    /// f.push(vec![0.9, 100.0], "expensive");
+    /// f.push(vec![0.7, 20.0],  "cheap");
+    /// f.push(vec![0.5, 5.0],   "cheapest");
+    ///
+    /// f.retain(|p| p.values[1] < 50.0); // budget constraint on cost
+    /// assert_eq!(f.len(), 2);
+    /// ```
+    pub fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&Point<V>) -> bool,
+    {
+        self.points.retain(f);
+        self.update_stats();
+    }
+
     /// Calculate the hypervolume of the frontier relative to a reference point.
     ///
     /// **Reference point selection matters.** Hypervolume values are only comparable for
@@ -505,6 +833,187 @@ impl<V> ParetoFrontier<V> {
         // In oriented space, dominance is pure-maximize.
         let oriented = nondominated_max(&oriented, self.eps);
         hypervolume_max_exact(&oriented, dim, self.eps)
+    }
+
+    /// Hypervolume contribution of each point on the frontier.
+    ///
+    /// The contribution of point `i` is `HV(all) - HV(all \ {i})`: how much
+    /// hypervolume would be lost if that point were removed. Points with high
+    /// contributions are most valuable to the frontier's quality.
+    ///
+    /// This is the building block for indicator-based selection (SMS-EMOA, IBEA).
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// f.push(vec![1.0, 0.5], ());
+    /// f.push(vec![0.5, 1.0], ());
+    ///
+    /// let contribs = f.hypervolume_contributions(&[0.0, 0.0]);
+    /// assert_eq!(contribs.len(), 2);
+    /// // Both points contribute positive volume
+    /// assert!(contribs.iter().all(|&c| c > 0.0));
+    /// // Sum of contributions >= total HV (overlap possible in general,
+    /// // but for 2 non-dominated points they partition the space)
+    /// ```
+    pub fn hypervolume_contributions(&self, ref_point: &[f64]) -> Vec<f64> {
+        let n = self.points.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let total = self.hypervolume(ref_point);
+        let dim = self.directions.len();
+
+        (0..n)
+            .map(|skip| {
+                // Build oriented points excluding `skip`
+                let mut oriented: Vec<Vec<f64>> = self
+                    .points
+                    .iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != skip)
+                    .map(|(_, p)| {
+                        p.values
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &v)| match self.directions[i] {
+                                Direction::Maximize => (v - ref_point[i]).max(0.0),
+                                Direction::Minimize => (ref_point[i] - v).max(0.0),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+
+                oriented.retain(|p| p.iter().all(|&x| x > self.eps));
+                if oriented.is_empty() {
+                    return total;
+                }
+                let oriented = nondominated_max(&oriented, self.eps);
+                let hv_without = hypervolume_max_exact(&oriented, dim, self.eps);
+                (total - hv_without).max(0.0)
+            })
+            .collect()
+    }
+
+    /// Identify the high-tradeoff (knee) point on the frontier.
+    ///
+    /// The knee point is where the marginal tradeoff between objectives is
+    /// steepest -- small movement along the front causes large changes in
+    /// objective values. This is typically the most "balanced" compromise.
+    ///
+    /// Uses the maximum normalized distance from the hyperplane connecting
+    /// the extreme points. For 2D, this is the point farthest from the line
+    /// between the endpoints. For higher dimensions, it generalizes to the
+    /// point farthest from the convex hull of the extremes.
+    ///
+    /// Returns `None` if the frontier has fewer than 3 points (no interior
+    /// points to evaluate).
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// f.push(vec![1.0, 0.0], "extreme_a");
+    /// f.push(vec![0.6, 0.6], "knee");
+    /// f.push(vec![0.0, 1.0], "extreme_b");
+    ///
+    /// let knee = f.knee_index().unwrap();
+    /// assert_eq!(f.points()[knee].data, "knee");
+    /// ```
+    pub fn knee_index(&self) -> Option<usize> {
+        let n = self.points.len();
+        if n < 3 {
+            return None;
+        }
+        let dim = self.directions.len();
+
+        // Normalize all points to [0,1] using ideal/nadir
+        let ideal = self.ideal_point()?;
+        let nadir = self.nadir_point()?;
+
+        let normalize = |p: &Point<V>| -> Vec<f64> {
+            (0..dim)
+                .map(|i| {
+                    let range = (ideal[i] - nadir[i]).abs();
+                    if range < self.eps {
+                        return 0.5;
+                    }
+                    match self.directions[i] {
+                        Direction::Maximize => (p.values[i] - nadir[i]) / range,
+                        Direction::Minimize => (nadir[i] - p.values[i]) / range,
+                    }
+                })
+                .collect()
+        };
+
+        let normed: Vec<Vec<f64>> = self.points.iter().map(normalize).collect();
+
+        // For each point, compute the distance to the line/hyperplane
+        // connecting the extreme points. Use the standard formula:
+        // distance = |sum_i(p_i) - 1| / sqrt(d)  for the unit simplex normal.
+        // This works because normalized extreme points are near the axes.
+        let inv_sqrt_d = 1.0 / (dim as f64).sqrt();
+
+        let mut best_idx = 0;
+        let mut best_dist = f64::NEG_INFINITY;
+
+        for (idx, p) in normed.iter().enumerate() {
+            // Distance from the hyperplane sum(x_i) = 1 (the simplex face)
+            let sum: f64 = p.iter().sum();
+            let dist = (sum - 1.0).abs() * inv_sqrt_d;
+            // Prefer points above the hyperplane (convex knee)
+            let signed_dist = if sum >= 1.0 { dist } else { -dist };
+            if signed_dist > best_dist {
+                best_dist = signed_dist;
+                best_idx = idx;
+            }
+        }
+
+        Some(best_idx)
+    }
+
+    /// Construct a frontier from directions and an iterator of `(values, data)` pairs.
+    ///
+    /// Each item is passed to [`push`](Self::push); dominated points are discarded
+    /// as usual. This is the batch version of calling `new` + repeated `push`.
+    ///
+    /// ```
+    /// use pare::{Direction, ParetoFrontier};
+    ///
+    /// let items = vec![
+    ///     (vec![0.9, 0.1], "A"),
+    ///     (vec![0.5, 0.5], "B"),
+    ///     (vec![0.4, 0.4], "C"), // dominated by B
+    /// ];
+    ///
+    /// let f = ParetoFrontier::from_points(
+    ///     vec![Direction::Maximize, Direction::Maximize],
+    ///     items,
+    /// );
+    /// assert_eq!(f.len(), 2);
+    /// ```
+    pub fn from_points(
+        directions: Vec<Direction>,
+        items: impl IntoIterator<Item = (Vec<f64>, V)>,
+    ) -> Self {
+        let mut frontier = Self::new(directions);
+        for (values, data) in items {
+            frontier.push(values, data);
+        }
+        frontier
+    }
+}
+
+impl<V> Extend<(Vec<f64>, V)> for ParetoFrontier<V> {
+    /// Extend the frontier with an iterator of `(values, data)` pairs.
+    ///
+    /// Each item is passed to [`push`](Self::push); dominated points are
+    /// discarded as usual.
+    fn extend<I: IntoIterator<Item = (Vec<f64>, V)>>(&mut self, iter: I) {
+        for (values, data) in iter {
+            self.push(values, data);
+        }
     }
 }
 
@@ -848,6 +1357,92 @@ pub fn pareto_indices_2d(points: &[Vec<f32>]) -> Option<Vec<usize>> {
         }
     }
     Some(out)
+}
+
+/// Partition points into successive non-dominated layers (Pareto layers).
+///
+/// Layer 0 is the Pareto front. Layer 1 is the front of the remaining points
+/// after removing layer 0, and so on. All objectives are maximized.
+///
+/// Returns `None` if any point has inconsistent dimensions or non-finite values.
+///
+/// ```
+/// use pare::pareto_layers;
+///
+/// let points = vec![
+///     vec![0.9f32, 0.1], // layer 0
+///     vec![0.5, 0.5],    // layer 0
+///     vec![0.4, 0.4],    // layer 1 (dominated by [0.5, 0.5])
+///     vec![0.3, 0.3],    // layer 2
+/// ];
+///
+/// let layers = pareto_layers(&points).unwrap();
+/// assert!(layers[0].contains(&0));
+/// assert!(layers[0].contains(&1));
+/// assert_eq!(layers[1], vec![2]);
+/// assert_eq!(layers[2], vec![3]);
+/// ```
+pub fn pareto_layers(points: &[Vec<f32>]) -> Option<Vec<Vec<usize>>> {
+    if points.is_empty() {
+        return Some(Vec::new());
+    }
+    let d = points[0].len();
+    if d == 0 || points.iter().any(|p| p.len() != d) {
+        return None;
+    }
+    if points.iter().any(|p| p.iter().any(|v| !v.is_finite())) {
+        return None;
+    }
+
+    let directions = vec![Direction::Maximize; d];
+    let eps = 1e-9_f64;
+    let as_f64: Vec<Vec<f64>> = points
+        .iter()
+        .map(|p| p.iter().map(|&x| x as f64).collect())
+        .collect();
+
+    let mut remaining: Vec<usize> = (0..points.len()).collect();
+    let mut layers = Vec::new();
+
+    while !remaining.is_empty() {
+        // Find the non-dominated set among remaining
+        let mut keep = vec![true; remaining.len()];
+        for i in 0..remaining.len() {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..remaining.len() {
+                if i == j || !keep[j] {
+                    continue;
+                }
+                if dominates(
+                    &directions,
+                    eps,
+                    &as_f64[remaining[j]],
+                    &as_f64[remaining[i]],
+                ) {
+                    keep[i] = false;
+                    break;
+                }
+            }
+        }
+
+        let layer: Vec<usize> = remaining
+            .iter()
+            .zip(keep.iter())
+            .filter_map(|(&idx, &k)| k.then_some(idx))
+            .collect();
+
+        remaining = remaining
+            .into_iter()
+            .zip(keep.iter())
+            .filter_map(|(idx, &k)| (!k).then_some(idx))
+            .collect();
+
+        layers.push(layer);
+    }
+
+    Some(layers)
 }
 
 /// Return indices of the k-dominant frontier (maximize/maximize/...).

@@ -1,4 +1,4 @@
-use pare::{dominates, Direction, FrontierError, ParetoFrontier};
+use pare::{dominates, pareto_layers, Direction, FrontierError, ParetoFrontier};
 
 #[test]
 fn try_new_rejects_empty() {
@@ -293,4 +293,428 @@ fn pareto_indices_rejects_inf() {
     use pare::pareto_indices;
     let points = vec![vec![1.0f32, f32::INFINITY], vec![0.5, 0.5]];
     assert!(pareto_indices(&points).is_none());
+}
+
+// ---- new API: eps() and stats() accessors ----
+
+#[test]
+fn eps_accessor_returns_default() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!((f.eps() - 1e-9).abs() < 1e-15);
+}
+
+#[test]
+fn eps_accessor_returns_custom() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]).with_eps(0.01);
+    assert!((f.eps() - 0.01).abs() < 1e-15);
+}
+
+#[test]
+fn stats_accessor_after_push() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 2.0], ());
+    f.push(vec![3.0, 1.0], ());
+    let stats = f.stats();
+    assert_eq!(stats.len(), 2);
+    assert!((stats[0].min - 1.0).abs() < 1e-9);
+    assert!((stats[0].max - 3.0).abs() < 1e-9);
+}
+
+// ---- new API: ideal_point / nadir_point ----
+
+#[test]
+fn ideal_point_empty_returns_none() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!(f.ideal_point().is_none());
+}
+
+#[test]
+fn ideal_nadir_maximize_only() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![0.9, 0.1], ());
+    f.push(vec![0.1, 0.9], ());
+
+    let ideal = f.ideal_point().unwrap();
+    assert!((ideal[0] - 0.9).abs() < 1e-9);
+    assert!((ideal[1] - 0.9).abs() < 1e-9);
+
+    let nadir = f.nadir_point().unwrap();
+    assert!((nadir[0] - 0.1).abs() < 1e-9);
+    assert!((nadir[1] - 0.1).abs() < 1e-9);
+}
+
+#[test]
+fn ideal_nadir_mixed_directions() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    f.push(vec![0.9, 10.0], ());
+    f.push(vec![0.7, 5.0], ());
+
+    let ideal = f.ideal_point().unwrap();
+    assert!((ideal[0] - 0.9).abs() < 1e-9); // max of maximize
+    assert!((ideal[1] - 5.0).abs() < 1e-9); // min of minimize
+
+    let nadir = f.nadir_point().unwrap();
+    assert!((nadir[0] - 0.7).abs() < 1e-9); // min of maximize
+    assert!((nadir[1] - 10.0).abs() < 1e-9); // max of minimize
+}
+
+// ---- new API: ranked_indices ----
+
+#[test]
+fn ranked_indices_order() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![0.9, 0.1], "A");
+    f.push(vec![0.5, 0.5], "B");
+    f.push(vec![0.1, 0.9], "C");
+
+    // Weight heavily on dim 0
+    let ranked = f.ranked_indices(&[1.0, 0.0]);
+    assert_eq!(ranked[0], 0); // A best
+    assert_eq!(ranked[2], 2); // C worst
+
+    // Weight heavily on dim 1
+    let ranked = f.ranked_indices(&[0.0, 1.0]);
+    assert_eq!(ranked[0], 2); // C best
+    assert_eq!(ranked[2], 0); // A worst
+}
+
+#[test]
+fn ranked_indices_empty() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!(f.ranked_indices(&[1.0]).is_empty());
+}
+
+// ---- new API: ASF ----
+
+#[test]
+fn asf_ideal_point_scores_zero() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 1.0], "only");
+
+    let ideal = f.ideal_point().unwrap();
+    let score = f.asf(0, &[1.0, 1.0], &ideal);
+    assert!(
+        score.abs() < 1e-9,
+        "point at ideal should have ASF ~0, got {score}"
+    );
+}
+
+#[test]
+fn asf_selects_balanced_point() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![0.9, 0.1], "A");
+    f.push(vec![0.5, 0.5], "B");
+    f.push(vec![0.1, 0.9], "C");
+
+    let ideal = f.ideal_point().unwrap();
+    let best = f.best_asf(&[1.0, 1.0], &ideal).unwrap();
+    // B is the most balanced -- closest to ideal along equal weights
+    assert_eq!(f.points()[best].data, "B");
+}
+
+#[test]
+fn asf_respects_weights() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![0.9, 0.1], "A");
+    f.push(vec![0.5, 0.5], "B");
+    f.push(vec![0.1, 0.9], "C");
+
+    let ideal = f.ideal_point().unwrap();
+    // Heavily weight dim 0 -> should prefer A
+    let best = f.best_asf(&[0.01, 1.0], &ideal).unwrap();
+    assert_eq!(f.points()[best].data, "A");
+}
+
+#[test]
+fn asf_zero_weight_returns_infinity() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize]);
+    f.push(vec![0.5], ());
+    let score = f.asf(0, &[0.0], &[1.0]);
+    assert!(score.is_infinite());
+}
+
+#[test]
+fn best_asf_empty_returns_none() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!(f.best_asf(&[1.0], &[0.0]).is_none());
+}
+
+#[test]
+fn asf_mixed_directions() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    f.push(vec![0.9, 10.0], "high-acc");
+    f.push(vec![0.7, 5.0], "low-lat");
+
+    let ideal = f.ideal_point().unwrap();
+    // Equal weights: should pick the more balanced tradeoff
+    let s0 = f.asf(0, &[1.0, 1.0], &ideal);
+    let s1 = f.asf(1, &[1.0, 1.0], &ideal);
+    // Both should be non-negative (distance from ideal)
+    assert!(s0 >= -1e-9);
+    assert!(s1 >= -1e-9);
+}
+
+// ---- new API: retain ----
+
+#[test]
+fn retain_filters_points() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    f.push(vec![0.9, 100.0], "expensive");
+    f.push(vec![0.7, 20.0], "cheap");
+    f.push(vec![0.5, 5.0], "cheapest");
+
+    f.retain(|p| p.values[1] < 50.0);
+    assert_eq!(f.len(), 2);
+    assert!(f.points().iter().all(|p| p.values[1] < 50.0));
+}
+
+#[test]
+fn retain_updates_stats() {
+    // Use 2D so all points are non-dominated tradeoffs
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 3.0], ());
+    f.push(vec![2.0, 2.0], ());
+    f.push(vec![3.0, 1.0], ());
+    assert_eq!(f.len(), 3);
+
+    f.retain(|p| p.values[0] <= 2.0);
+    assert_eq!(f.len(), 2);
+    assert!((f.stats()[0].max - 2.0).abs() < 1e-9);
+}
+
+#[test]
+fn retain_all_removed_yields_empty() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize]);
+    f.push(vec![1.0], ());
+    f.retain(|_| false);
+    assert!(f.is_empty());
+}
+
+// ---- new API: pareto_layers ----
+
+#[test]
+fn pareto_layers_basic() {
+    let points = vec![
+        vec![0.9f32, 0.1], // layer 0
+        vec![0.5, 0.5],    // layer 0
+        vec![0.4, 0.4],    // layer 1
+        vec![0.3, 0.3],    // layer 2
+    ];
+    let layers = pareto_layers(&points).unwrap();
+    assert_eq!(layers.len(), 3);
+    assert!(layers[0].contains(&0));
+    assert!(layers[0].contains(&1));
+    assert_eq!(layers[1], vec![2]);
+    assert_eq!(layers[2], vec![3]);
+}
+
+#[test]
+fn pareto_layers_empty() {
+    let layers = pareto_layers(&[]).unwrap();
+    assert!(layers.is_empty());
+}
+
+#[test]
+fn pareto_layers_all_nondominated() {
+    let points = vec![vec![1.0f32, 0.0], vec![0.0, 1.0]];
+    let layers = pareto_layers(&points).unwrap();
+    assert_eq!(layers.len(), 1);
+    assert_eq!(layers[0].len(), 2);
+}
+
+#[test]
+fn pareto_layers_rejects_nan() {
+    let points = vec![vec![1.0f32, f32::NAN]];
+    assert!(pareto_layers(&points).is_none());
+}
+
+// ---- new API: from_points / Extend ----
+
+#[test]
+fn from_points_basic() {
+    let items = vec![
+        (vec![0.9, 0.1], "A"),
+        (vec![0.5, 0.5], "B"),
+        (vec![0.4, 0.4], "C"), // dominated by B
+    ];
+    let f = ParetoFrontier::from_points(vec![Direction::Maximize, Direction::Maximize], items);
+    assert_eq!(f.len(), 2);
+}
+
+#[test]
+fn from_points_empty_iter() {
+    let f = ParetoFrontier::<()>::from_points(vec![Direction::Maximize], std::iter::empty());
+    assert!(f.is_empty());
+}
+
+#[test]
+fn extend_adds_nondominated_only() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![0.9, 0.1], "A");
+
+    f.extend(vec![
+        (vec![0.1, 0.9], "B"),  // non-dominated tradeoff
+        (vec![0.4, 0.05], "C"), // dominated by A
+    ]);
+    assert_eq!(f.len(), 2); // A and B
+}
+
+// ---- new API: normalized_values ----
+
+#[test]
+fn normalized_values_extremes() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    f.push(vec![0.9, 10.0], "a"); // best acc, worst lat
+    f.push(vec![0.7, 5.0], "b"); // worst acc, best lat
+
+    let na = f.normalized_values(0).unwrap();
+    assert!((na[0] - 1.0).abs() < 1e-9); // ideal in dim 0
+    assert!((na[1] - 0.0).abs() < 1e-9); // nadir in dim 1
+
+    let nb = f.normalized_values(1).unwrap();
+    assert!((nb[0] - 0.0).abs() < 1e-9);
+    assert!((nb[1] - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn normalized_values_empty_returns_none() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!(f.normalized_values(0).is_none());
+}
+
+#[test]
+fn normalized_values_single_point_returns_half() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize]);
+    f.push(vec![5.0], ());
+    let norm = f.normalized_values(0).unwrap();
+    assert!((norm[0] - 0.5).abs() < 1e-9); // no spread -> 0.5
+}
+
+// ---- new API: suggest_ref_point ----
+
+#[test]
+fn suggest_ref_point_is_worse_than_nadir() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    f.push(vec![0.9, 10.0], ());
+    f.push(vec![0.7, 5.0], ());
+
+    let nadir = f.nadir_point().unwrap();
+    let ref_pt = f.suggest_ref_point(0.1).unwrap();
+
+    // For Maximize: ref < nadir (worse)
+    assert!(ref_pt[0] < nadir[0]);
+    // For Minimize: ref > nadir (worse)
+    assert!(ref_pt[1] > nadir[1]);
+}
+
+#[test]
+fn suggest_ref_point_produces_positive_hv() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 0.0], ());
+    f.push(vec![0.0, 1.0], ());
+
+    let ref_pt = f.suggest_ref_point(0.1).unwrap();
+    let hv = f.hypervolume(&ref_pt);
+    assert!(
+        hv > 0.0,
+        "HV with suggested ref point should be positive, got {hv}"
+    );
+}
+
+#[test]
+fn suggest_ref_point_empty_returns_none() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!(f.suggest_ref_point(0.1).is_none());
+}
+
+// ---- new API: hypervolume_contributions ----
+
+#[test]
+fn hv_contributions_are_positive_and_bounded() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 0.5], ());
+    f.push(vec![0.5, 1.0], ());
+
+    let total = f.hypervolume(&[0.0, 0.0]);
+    let contribs = f.hypervolume_contributions(&[0.0, 0.0]);
+    assert_eq!(contribs.len(), 2);
+    // Each contribution is positive and <= total
+    for &c in &contribs {
+        assert!(c > 0.0, "contribution should be positive, got {c}");
+        assert!(c <= total + 1e-9, "contribution {c} exceeds total {total}");
+    }
+    // Sum of contributions <= total (shared volume is counted once in total
+    // but not in individual contributions)
+    let sum: f64 = contribs.iter().sum();
+    assert!(sum <= total + 1e-9);
+}
+
+#[test]
+fn hv_contributions_empty() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!(f.hypervolume_contributions(&[0.0]).is_empty());
+}
+
+#[test]
+fn hv_contributions_single_point() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 1.0], ());
+
+    let contribs = f.hypervolume_contributions(&[0.0, 0.0]);
+    assert_eq!(contribs.len(), 1);
+    assert!((contribs[0] - 1.0).abs() < 1e-9); // entire HV
+}
+
+// ---- new API: knee_index ----
+
+#[test]
+fn knee_index_selects_balanced_point() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 0.0], "extreme_a");
+    f.push(vec![0.6, 0.6], "knee");
+    f.push(vec![0.0, 1.0], "extreme_b");
+
+    let knee = f.knee_index().unwrap();
+    assert_eq!(f.points()[knee].data, "knee");
+}
+
+#[test]
+fn knee_index_too_few_points() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    f.push(vec![1.0, 0.0], ());
+    f.push(vec![0.0, 1.0], ());
+    assert!(f.knee_index().is_none()); // need >= 3 points
+}
+
+#[test]
+fn knee_index_empty() {
+    let f = ParetoFrontier::<()>::new(vec![Direction::Maximize]);
+    assert!(f.knee_index().is_none());
+}
+
+#[test]
+fn knee_index_mixed_directions() {
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    f.push(vec![0.9, 50.0], "fast");
+    f.push(vec![0.7, 20.0], "balanced");
+    f.push(vec![0.5, 5.0], "cheap");
+
+    // Should return Some (3 points)
+    let knee = f.knee_index().unwrap();
+    // The balanced point should be the knee
+    assert_eq!(f.points()[knee].data, "balanced");
+}
+
+#[test]
+fn pareto_layers_total_count_matches_input() {
+    let points = vec![
+        vec![1.0f32, 0.0],
+        vec![0.5, 0.5],
+        vec![0.0, 1.0],
+        vec![0.3, 0.3],
+        vec![0.1, 0.1],
+    ];
+    let layers = pareto_layers(&points).unwrap();
+    let total: usize = layers.iter().map(|l| l.len()).sum();
+    assert_eq!(total, points.len());
 }
