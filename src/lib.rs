@@ -1500,3 +1500,88 @@ pub fn pareto_indices_k_dominance(points: &[Vec<f32>], k: usize) -> Option<Vec<u
             .collect(),
     )
 }
+
+// ============================================================================
+// Quality indicators
+// ============================================================================
+
+/// Euclidean distance between two points.
+fn euclidean_dist(a: &[f64], b: &[f64]) -> f64 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(&ai, &bi)| (ai - bi) * (ai - bi))
+        .sum::<f64>()
+        .sqrt()
+}
+
+/// Generational Distance (GD) from a front to a reference set.
+///
+/// Measures how far each point in `front` is from the nearest point in
+/// `reference`. Lower is better; zero means every front point lies on the
+/// reference set.
+///
+/// $$
+/// \text{GD}(F, R) = \frac{1}{|F|} \sum_{f \in F} \min_{r \in R} \| f - r \|
+/// $$
+///
+/// Returns `None` if either set is empty or dimensions are inconsistent.
+///
+/// ```
+/// use pare::generational_distance;
+///
+/// let front = vec![vec![0.5, 0.5]];
+/// let reference = vec![vec![0.5, 0.5], vec![1.0, 0.0]];
+/// let gd = generational_distance(&front, &reference).unwrap();
+/// assert!(gd < 1e-9); // front point is on the reference set
+/// ```
+pub fn generational_distance(front: &[Vec<f64>], reference: &[Vec<f64>]) -> Option<f64> {
+    if front.is_empty() || reference.is_empty() {
+        return None;
+    }
+    let d = front[0].len();
+    if d == 0 || front.iter().any(|p| p.len() != d) || reference.iter().any(|p| p.len() != d) {
+        return None;
+    }
+
+    let sum: f64 = front
+        .iter()
+        .map(|f| {
+            reference
+                .iter()
+                .map(|r| euclidean_dist(f, r))
+                .fold(f64::INFINITY, f64::min)
+        })
+        .sum();
+
+    Some(sum / front.len() as f64)
+}
+
+/// Inverted Generational Distance (IGD) from a front to a reference set.
+///
+/// Measures how well the front covers the reference set. For each reference
+/// point, finds the nearest front point. Lower is better; zero means every
+/// reference point is covered by the front.
+///
+/// $$
+/// \text{IGD}(F, R) = \frac{1}{|R|} \sum_{r \in R} \min_{f \in F} \| r - f \|
+/// $$
+///
+/// IGD is generally preferred over GD because it captures both convergence
+/// and spread. A front that covers only one region of the reference set
+/// will have low GD but high IGD.
+///
+/// Returns `None` if either set is empty or dimensions are inconsistent.
+///
+/// ```
+/// use pare::inverted_generational_distance;
+///
+/// let front = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+/// let reference = vec![vec![1.0, 0.0], vec![0.5, 0.5], vec![0.0, 1.0]];
+/// let igd = inverted_generational_distance(&front, &reference).unwrap();
+/// // front covers the extremes but not the middle
+/// assert!(igd > 0.0);
+/// ```
+pub fn inverted_generational_distance(front: &[Vec<f64>], reference: &[Vec<f64>]) -> Option<f64> {
+    // IGD(F, R) = GD(R, F) -- swap the roles
+    generational_distance(reference, front)
+}

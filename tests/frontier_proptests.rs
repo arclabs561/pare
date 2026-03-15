@@ -1,4 +1,4 @@
-use pare::{Direction, ParetoFrontier};
+use pare::{generational_distance, Direction, ParetoFrontier};
 use proptest::prelude::*;
 
 proptest! {
@@ -186,5 +186,16 @@ proptest! {
             let brute_kept = !dom;
             assert_eq!(kept.contains(&i), brute_kept);
         }
+    }
+}
+
+// GD(A, A) == 0 for any non-empty point set.
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 128, .. ProptestConfig::default() })]
+
+    #[test]
+    fn test_gd_identity(values in prop::collection::vec(prop::collection::vec(0.0..1.0, 2), 1..20)) {
+        let gd = generational_distance(&values, &values).unwrap();
+        assert!(gd < 1e-12, "GD(A, A) should be 0, got {gd}");
     }
 }
