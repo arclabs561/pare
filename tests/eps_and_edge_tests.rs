@@ -67,6 +67,58 @@ fn crowding_distance_two_points() {
     assert!(cd[1].is_infinite());
 }
 
+// Fortin-Parizeau: shared boundary values all get infinite distance
+#[test]
+fn crowding_distance_shared_boundary_3d() {
+    // Use 3 objectives so points sharing a value in one dim can be non-dominated.
+    let mut f = ParetoFrontier::new(vec![
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+    ]);
+    // Two points share dim0=0.0 (min boundary) but trade off in dim1/dim2
+    f.push(vec![0.0, 1.0, 0.5], 0);
+    f.push(vec![0.0, 0.5, 1.0], 1);
+    f.push(vec![1.0, 0.0, 0.0], 2);
+    assert_eq!(f.len(), 3);
+
+    let cd = f.crowding_distances();
+    // Points 0 and 1 share min boundary in dim 0 -> both should be infinite
+    assert!(
+        cd[0].is_infinite(),
+        "shared min boundary should be infinite"
+    );
+    assert!(
+        cd[1].is_infinite(),
+        "shared min boundary should be infinite"
+    );
+    assert!(cd[2].is_infinite(), "max boundary should be infinite");
+}
+
+#[test]
+fn crowding_distance_tied_dim_mixed_directions() {
+    // Use mixed directions: tied in dim 0 but non-dominated due to dim 1 Minimize
+    let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Minimize]);
+    f.push(vec![0.5, 1.0], 0); // same dim0, worse dim1
+    f.push(vec![0.5, 5.0], 1); // same dim0, worse dim1 -- dominated by 0
+                               // Can't have 3 non-dominated points with same dim0 in 2D; use 3 objectives
+    let mut f = ParetoFrontier::new(vec![
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+    ]);
+    f.push(vec![0.5, 1.0, 0.0], 0);
+    f.push(vec![0.5, 0.0, 1.0], 1);
+    f.push(vec![0.5, 0.5, 0.5], 2);
+    assert_eq!(f.len(), 3);
+
+    let cd = f.crowding_distances();
+    // All tied in dim 0 -> all are boundary in that dim -> all infinite
+    assert!(cd[0].is_infinite());
+    assert!(cd[1].is_infinite());
+    assert!(cd[2].is_infinite(), "all tied in dim 0 makes all boundary");
+}
+
 // ====================================================================
 // NormalizationStats edge cases
 // ====================================================================
