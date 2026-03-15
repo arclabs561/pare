@@ -425,12 +425,22 @@ impl<V> ParetoFrontier<V> {
                 av.partial_cmp(&bv).unwrap_or(Ordering::Equal)
             });
 
-            distances[indices[0]] = f64::INFINITY;
-            distances[indices[n - 1]] = f64::INFINITY;
-
             let min_val = self.points[indices[0]].values[i];
             let max_val = self.points[indices[n - 1]].values[i];
             let range = max_val - min_val;
+
+            // Fortin-Parizeau (GECCO 2013): all points tied at the boundary
+            // value get infinite distance, not just the first/last index.
+            let mut lo = 0;
+            while lo < n && (self.points[indices[lo]].values[i] - min_val).abs() <= self.eps {
+                distances[indices[lo]] = f64::INFINITY;
+                lo += 1;
+            }
+            let mut hi = n - 1;
+            while hi > 0 && (self.points[indices[hi]].values[i] - max_val).abs() <= self.eps {
+                distances[indices[hi]] = f64::INFINITY;
+                hi -= 1;
+            }
 
             if range > self.eps {
                 for window in indices.windows(3) {
