@@ -1,4 +1,4 @@
-use pare::{generational_distance, Direction, ParetoFrontier};
+use pare::{generational_distance, Direction, EpsilonArchive, ParetoFrontier};
 use proptest::prelude::*;
 
 proptest! {
@@ -197,5 +197,25 @@ proptest! {
     fn test_gd_identity(values in prop::collection::vec(prop::collection::vec(0.0..1.0, 2), 1..20)) {
         let gd = generational_distance(&values, &values).unwrap();
         assert!(gd < 1e-12, "GD(A, A) should be 0, got {gd}");
+    }
+
+    // Epsilon archive size bounded: for points in [0,1]^2 with eps=0.25,
+    // at most ceil(1/0.25)^2 = 16 cells.
+    #[test]
+    fn test_epsilon_archive_size_bounded(
+        values in prop::collection::vec(prop::collection::vec(0.0..1.0, 2), 1..100)
+    ) {
+        let mut archive = EpsilonArchive::new_uniform(
+            vec![Direction::Maximize, Direction::Maximize],
+            0.25,
+        );
+        for (i, v) in values.into_iter().enumerate() {
+            archive.push(v, i);
+        }
+        assert!(
+            archive.len() <= 16,
+            "archive size {} exceeds theoretical bound of 16 for eps=0.25 in [0,1]^2",
+            archive.len(),
+        );
     }
 }

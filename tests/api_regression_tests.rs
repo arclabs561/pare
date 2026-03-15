@@ -1,6 +1,6 @@
 use pare::{
     dominates, generational_distance, inverted_generational_distance, pareto_layers, Direction,
-    FrontierError, ParetoFrontier,
+    EpsilonArchive, FrontierError, ParetoFrontier,
 };
 
 #[test]
@@ -780,4 +780,105 @@ fn gd_known_value() {
     let reference = vec![vec![3.0, 4.0]];
     let gd = generational_distance(&front, &reference).unwrap();
     assert!((gd - 5.0).abs() < 1e-9);
+}
+
+// ---- new API: EpsilonArchive ----
+
+#[test]
+fn epsilon_archive_basic_insertion() {
+    let mut a = EpsilonArchive::new_uniform(vec![Direction::Maximize, Direction::Maximize], 0.1);
+    assert!(a.push(vec![0.5, 0.5], "a"));
+    assert!(a.push(vec![0.1, 0.9], "b")); // different cell
+    assert_eq!(a.len(), 2);
+}
+
+#[test]
+fn epsilon_archive_replaces_in_same_cell() {
+    let mut a = EpsilonArchive::new_uniform(vec![Direction::Maximize, Direction::Maximize], 0.1);
+    assert!(a.push(vec![0.51, 0.51], "a"));
+    // Same cell (floor(0.55/0.1)=5, floor(0.55/0.1)=5), but strictly better
+    assert!(a.push(vec![0.55, 0.55], "b"));
+    assert_eq!(a.len(), 1);
+    assert_eq!(a.points()[0].data, "b");
+}
+
+#[test]
+fn epsilon_archive_rejects_dominated() {
+    let mut a = EpsilonArchive::new_uniform(vec![Direction::Maximize, Direction::Maximize], 0.1);
+    a.push(vec![0.9, 0.9], "good");
+    // This point's cell is dominated by the existing cell
+    assert!(!a.push(vec![0.1, 0.1], "bad"));
+    assert_eq!(a.len(), 1);
+}
+
+#[test]
+fn epsilon_archive_bounds_size() {
+    // With eps=0.5 in [0,1]^2, at most ceil(1/0.5)^2 = 4 cells
+    let mut a = EpsilonArchive::new_uniform(vec![Direction::Maximize, Direction::Maximize], 0.5);
+    for i in 0..100 {
+        let x = (i as f64) / 100.0;
+        a.push(vec![x, 1.0 - x], i);
+    }
+    assert!(
+        a.len() <= 4,
+        "archive size {} should be <= 4 for eps=0.5 in [0,1]^2",
+        a.len()
+    );
+}
+
+#[test]
+fn epsilon_archive_into_frontier() {
+    let mut a = EpsilonArchive::new_uniform(vec![Direction::Maximize, Direction::Maximize], 0.1);
+    a.push(vec![0.9, 0.1], "a");
+    a.push(vec![0.1, 0.9], "b");
+
+    let f = a.into_frontier();
+    assert_eq!(f.len(), 2);
+    // Should work as a normal frontier
+    let hv = f.hypervolume(&[0.0, 0.0]);
+    assert!(hv > 0.0);
+}
+
+#[test]
+fn epsilon_archive_mixed_directions() {
+    let mut a = EpsilonArchive::new(
+        vec![Direction::Maximize, Direction::Minimize],
+        vec![0.1, 10.0],
+    );
+    // Tradeoff: fast has better accuracy, slow has lower latency
+    a.push(vec![0.9, 50.0], "accurate");
+    a.push(vec![0.5, 5.0], "fast");
+    assert_eq!(a.len(), 2); // neither cell dominates the other
+}
+
+#[test]
+fn epsilon_archive_per_dim_eps() {
+    let mut a = EpsilonArchive::new(
+        vec![Direction::Maximize, Direction::Maximize],
+        vec![0.01, 1.0], // fine in dim 0, coarse in dim 1
+    );
+    a.push(vec![0.50, 0.5], "a");
+    a.push(vec![0.51, 0.5], "b"); // cell (51,0) dominates (50,0) -> replaces
+    assert_eq!(a.len(), 1);
+    // But with a tradeoff in dim 1:
+    a.push(vec![0.30, 1.5], "c"); // cell (30, 1) -- not dominated (worse dim0, better dim1)
+    assert_eq!(a.len(), 2);
+}
+
+#[test]
+fn epsilon_archive_empty() {
+    let a = EpsilonArchive::<()>::new_uniform(vec![Direction::Maximize], 0.1);
+    assert!(a.is_empty());
+    assert_eq!(a.len(), 0);
+}
+
+#[test]
+fn epsilon_archive_accessors() {
+    let a = EpsilonArchive::<()>::new(
+        vec![Direction::Maximize, Direction::Minimize],
+        vec![0.1, 0.2],
+    );
+    assert_eq!(a.directions().len(), 2);
+    assert!((a.grid_eps()[0] - 0.1).abs() < 1e-15);
+    assert!((a.grid_eps()[1] - 0.2).abs() < 1e-15);
 }
