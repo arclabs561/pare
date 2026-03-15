@@ -1,4 +1,7 @@
-use pare::{dominates, pareto_layers, Direction, FrontierError, ParetoFrontier};
+use pare::{
+    dominates, generational_distance, inverted_generational_distance, pareto_layers, Direction,
+    FrontierError, ParetoFrontier,
+};
 
 #[test]
 fn try_new_rejects_empty() {
@@ -717,4 +720,64 @@ fn pareto_layers_total_count_matches_input() {
     let layers = pareto_layers(&points).unwrap();
     let total: usize = layers.iter().map(|l| l.len()).sum();
     assert_eq!(total, points.len());
+}
+
+// ---- new API: generational_distance / inverted_generational_distance ----
+
+#[test]
+fn gd_perfect_front_is_zero() {
+    let pts = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+    let gd = generational_distance(&pts, &pts).unwrap();
+    assert!(gd < 1e-9, "GD of identical sets should be 0, got {gd}");
+}
+
+#[test]
+fn igd_perfect_front_is_zero() {
+    let pts = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+    let igd = inverted_generational_distance(&pts, &pts).unwrap();
+    assert!(igd < 1e-9, "IGD of identical sets should be 0, got {igd}");
+}
+
+#[test]
+fn gd_single_point() {
+    let front = vec![vec![0.0, 0.0]];
+    let reference = vec![vec![1.0, 0.0]];
+    let gd = generational_distance(&front, &reference).unwrap();
+    assert!((gd - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn igd_asymmetry() {
+    // Front covers only one extreme; IGD should be higher than GD
+    let front = vec![vec![1.0, 0.0]];
+    let reference = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+    let gd = generational_distance(&front, &reference).unwrap();
+    let igd = inverted_generational_distance(&front, &reference).unwrap();
+    assert!(gd < 1e-9, "front point is on reference, GD should be ~0");
+    assert!(
+        igd > 0.5,
+        "front misses half the reference, IGD should be large"
+    );
+}
+
+#[test]
+fn gd_empty_returns_none() {
+    assert!(generational_distance(&[], &[vec![1.0]]).is_none());
+    assert!(generational_distance(&[vec![1.0]], &[]).is_none());
+}
+
+#[test]
+fn gd_dimension_mismatch_returns_none() {
+    let front = vec![vec![1.0, 2.0]];
+    let reference = vec![vec![1.0]]; // different dim
+    assert!(generational_distance(&front, &reference).is_none());
+}
+
+#[test]
+fn gd_known_value() {
+    // Front at (0,0), reference at (3,4) -> distance = 5
+    let front = vec![vec![0.0, 0.0]];
+    let reference = vec![vec![3.0, 4.0]];
+    let gd = generational_distance(&front, &reference).unwrap();
+    assert!((gd - 5.0).abs() < 1e-9);
 }
