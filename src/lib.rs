@@ -1367,6 +1367,9 @@ fn hypervolume_max_exact(points: &[Vec<f64>], dim: usize, eps: f64) -> f64 {
     if dim == 2 {
         return hypervolume_max_2d(points, eps);
     }
+    if dim == 3 {
+        return hypervolume_max_3d(points, eps);
+    }
 
     // Collect unique slice levels (positive only).
     let mut levels: Vec<f64> = points
@@ -1423,6 +1426,96 @@ fn hypervolume_max_2d(points: &[Vec<f64>], eps: f64) -> f64 {
     for i in idxs {
         let x = points[i][0].max(0.0);
         let y = points[i][1].max(0.0);
+        let dx = (x - prev_x).max(0.0);
+        if dx > eps && y > eps {
+            area += dx * y;
+        }
+        prev_x = x;
+    }
+    area
+}
+
+/// Specialized 3D hypervolume using z-sweep with incremental 2D front.
+///
+/// O(n^2) worst case (dominated by 2D front maintenance), but avoids the
+/// overhead of recursive slicing (projection, re-filtering, re-sorting at
+/// each recursion level). For typical non-dominated sets this is significantly
+/// faster than the generic recursive path.
+fn hypervolume_max_3d(points: &[Vec<f64>], eps: f64) -> f64 {
+    if points.is_empty() {
+        return 0.0;
+    }
+
+    // Sort by z descending.
+    let mut sorted: Vec<usize> = (0..points.len()).collect();
+    sorted.sort_by(|&i, &j| {
+        points[j][2]
+            .partial_cmp(&points[i][2])
+            .unwrap_or(Ordering::Equal)
+    });
+
+    // 2D front maintained as (x, y) pairs sorted by x ascending.
+    // Invariant: y is non-increasing with x (since non-dominated).
+    let mut front_2d: Vec<(f64, f64)> = Vec::new();
+    let mut hv = 0.0;
+    let mut prev_z = points[sorted[0]][2];
+
+    // Process first point.
+    front_2d.push((points[sorted[0]][0], points[sorted[0]][1]));
+
+    for &idx in sorted.iter().skip(1) {
+        let z = points[idx][2];
+        let thickness = (prev_z - z).max(0.0);
+
+        if thickness > eps {
+            // Compute 2D HV from the current front.
+            let hv_2d = sweep_2d_front(&front_2d, eps);
+            hv += thickness * hv_2d;
+        }
+
+        prev_z = z;
+
+        // Insert (x, y) into the 2D front.
+        let x = points[idx][0];
+        let y = points[idx][1];
+        insert_2d_front(&mut front_2d, x, y, eps);
+    }
+
+    // Final slab from last z to 0.
+    if prev_z > eps {
+        let hv_2d = sweep_2d_front(&front_2d, eps);
+        hv += prev_z * hv_2d;
+    }
+
+    hv
+}
+
+/// Insert (x, y) into a sorted 2D non-dominated front (x ascending, y non-increasing).
+/// Removes dominated points after insertion.
+fn insert_2d_front(front: &mut Vec<(f64, f64)>, x: f64, y: f64, eps: f64) {
+    // Check if dominated: any existing point with x >= new_x and y >= new_y
+    for &(fx, fy) in front.iter() {
+        if fx + eps >= x && fy + eps >= y {
+            return; // dominated
+        }
+    }
+
+    // Remove points dominated by (x, y)
+    front.retain(|&(fx, fy)| !(x + eps >= fx && y + eps >= fy));
+
+    // Insert in sorted position by x
+    let pos = front.partition_point(|&(fx, _)| fx < x);
+    front.insert(pos, (x, y));
+}
+
+/// Compute 2D HV from a sorted non-dominated front (x ascending, y non-increasing).
+/// Reference at origin.
+fn sweep_2d_front(front: &[(f64, f64)], eps: f64) -> f64 {
+    let mut area = 0.0;
+    let mut prev_x = 0.0;
+    for &(x, y) in front {
+        let x = x.max(0.0);
+        let y = y.max(0.0);
         let dx = (x - prev_x).max(0.0);
         if dx > eps && y > eps {
             area += dx * y;
