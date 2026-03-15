@@ -1027,6 +1027,235 @@ impl<V> Extend<(Vec<f64>, V)> for ParetoFrontier<V> {
     }
 }
 
+// ============================================================================
+// Epsilon-dominance archiving (Laumanns et al. 2002)
+// ============================================================================
+
+/// Grid-based epsilon-dominance archive with bounded size.
+///
+/// Unlike [`ParetoFrontier::with_eps`] (numerical tolerance for float comparison),
+/// this type deliberately coarsens objective space into grid cells of width `eps`
+/// per dimension. At most one point is kept per grid cell, guaranteeing an
+/// archive size bounded by `prod_i(range_i / eps_i)`.
+///
+/// Use this for streaming / online optimization where memory must be bounded
+/// while maintaining an approximate Pareto front.
+///
+/// ```
+/// use pare::{Direction, EpsilonArchive};
+///
+/// let mut archive = EpsilonArchive::new_uniform(
+///     vec![Direction::Maximize, Direction::Maximize],
+///     0.1,
+/// );
+///
+/// archive.push(vec![0.91, 0.12], "a");
+/// archive.push(vec![0.92, 0.11], "b"); // same grid cell as "a", replaces if better
+/// archive.push(vec![0.50, 0.50], "c"); // different cell, kept
+/// assert!(archive.len() <= 2);
+/// ```
+#[derive(Debug, Clone)]
+pub struct EpsilonArchive<V> {
+    grid_eps: Vec<f64>,
+    directions: Vec<Direction>,
+    archive: Vec<Point<V>>,
+}
+
+impl<V> EpsilonArchive<V> {
+    /// Create an archive with per-dimension grid epsilon values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `grid_eps.len() != directions.len()` or any epsilon is not positive.
+    pub fn new(directions: Vec<Direction>, grid_eps: Vec<f64>) -> Self {
+        assert_eq!(
+            directions.len(),
+            grid_eps.len(),
+            "directions len ({}) must match grid_eps len ({})",
+            directions.len(),
+            grid_eps.len(),
+        );
+        assert!(
+            grid_eps.iter().all(|&e| e > 0.0 && e.is_finite()),
+            "all grid_eps values must be positive and finite"
+        );
+        Self {
+            grid_eps,
+            directions,
+            archive: Vec::new(),
+        }
+    }
+
+    /// Create an archive with a uniform grid epsilon for all dimensions.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `eps` is not positive.
+    pub fn new_uniform(directions: Vec<Direction>, eps: f64) -> Self {
+        let d = directions.len();
+        Self::new(directions, vec![eps; d])
+    }
+
+    /// Map a value to its grid cell index for a given dimension.
+    fn cell(&self, value: f64, dim: usize) -> i64 {
+        let oriented = match self.directions[dim] {
+            Direction::Maximize => value,
+            Direction::Minimize => -value,
+        };
+        (oriented / self.grid_eps[dim]).floor() as i64
+    }
+
+    /// Map a point to its grid cell vector.
+    fn cell_vec(&self, values: &[f64]) -> Vec<i64> {
+        (0..self.directions.len())
+            .map(|i| self.cell(values[i], i))
+            .collect()
+    }
+
+    /// Returns true if cell `a` epsilon-dominates cell `b`:
+    /// `a[i] >= b[i]` for all i, and `a[i] > b[i]` for at least one i.
+    fn cell_dominates(a: &[i64], b: &[i64]) -> bool {
+        let mut strictly_better = false;
+        for (&ai, &bi) in a.iter().zip(b.iter()) {
+            if ai < bi {
+                return false;
+            }
+            if ai > bi {
+                strictly_better = true;
+            }
+        }
+        strictly_better
+    }
+
+    /// Insert a point into the archive if it is not epsilon-dominated.
+    ///
+    /// Returns `true` if the point was added (or replaced an existing point
+    /// in the same cell), `false` if it was rejected.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values.len() != directions.len()` or any value is non-finite.
+    pub fn push(&mut self, values: Vec<f64>, data: V) -> bool {
+        assert_eq!(
+            values.len(),
+            self.directions.len(),
+            "values len ({}) must match directions len ({})",
+            values.len(),
+            self.directions.len(),
+        );
+        assert!(
+            values.iter().all(|v| v.is_finite()),
+            "all values must be finite"
+        );
+
+        let new_cell = self.cell_vec(&values);
+
+        // Check if any existing point's cell epsilon-dominates the new cell
+        for existing in &self.archive {
+            let ex_cell = self.cell_vec(&existing.values);
+            if Self::cell_dominates(&ex_cell, &new_cell) {
+                return false;
+            }
+            // Same cell: keep the one that's better in the raw values
+            if ex_cell == new_cell {
+                // Compare raw values: count dimensions where new is strictly better
+                let new_better = self.raw_dominates(&values, &existing.values);
+                if !new_better {
+                    return false; // existing is at least as good
+                }
+                // New point is better in raw values; will replace below
+            }
+        }
+
+        // Pre-compute cell vectors to avoid borrowing self in the closure.
+        let existing_cells: Vec<Vec<i64>> = self
+            .archive
+            .iter()
+            .map(|p| self.cell_vec(&p.values))
+            .collect();
+
+        // Remove points whose cells are epsilon-dominated by the new cell,
+        // or that share the same cell (being replaced).
+        let mut idx = 0;
+        self.archive.retain(|_| {
+            let keep = !Self::cell_dominates(&new_cell, &existing_cells[idx])
+                && existing_cells[idx] != new_cell;
+            idx += 1;
+            keep
+        });
+
+        self.archive.push(Point { values, data });
+        true
+    }
+
+    /// Raw dominance check (oriented by directions, no epsilon).
+    fn raw_dominates(&self, a: &[f64], b: &[f64]) -> bool {
+        let mut strictly_better = false;
+        for (i, (&av, &bv)) in a.iter().zip(b.iter()).enumerate() {
+            match self.directions[i] {
+                Direction::Maximize => {
+                    if av < bv {
+                        return false;
+                    }
+                    if av > bv {
+                        strictly_better = true;
+                    }
+                }
+                Direction::Minimize => {
+                    if av > bv {
+                        return false;
+                    }
+                    if av < bv {
+                        strictly_better = true;
+                    }
+                }
+            }
+        }
+        strictly_better
+    }
+
+    /// Number of points in the archive.
+    pub fn len(&self) -> usize {
+        self.archive.len()
+    }
+
+    /// Is the archive empty?
+    pub fn is_empty(&self) -> bool {
+        self.archive.is_empty()
+    }
+
+    /// Get all points in the archive.
+    pub fn points(&self) -> &[Point<V>] {
+        &self.archive
+    }
+
+    /// Get the grid epsilon values.
+    pub fn grid_eps(&self) -> &[f64] {
+        &self.grid_eps
+    }
+
+    /// Get the optimization directions.
+    pub fn directions(&self) -> &[Direction] {
+        &self.directions
+    }
+
+    /// Convert into a standard Pareto frontier for downstream analysis
+    /// (crowding distance, hypervolume, scoring, etc.).
+    ///
+    /// The resulting frontier uses the default numerical epsilon (`1e-9`),
+    /// not the grid epsilon. All archived points are inserted; since they
+    /// are mutually non-epsilon-dominated, most will survive standard
+    /// dominance filtering (though some edge cases near cell boundaries
+    /// may be filtered).
+    pub fn into_frontier(self) -> ParetoFrontier<V> {
+        let mut frontier = ParetoFrontier::new(self.directions);
+        for point in self.archive {
+            frontier.push(point.values, point.data);
+        }
+        frontier
+    }
+}
+
 impl ParetoFrontier<usize> {
     /// Construct a Pareto frontier from raw objective vectors.
     ///
