@@ -872,6 +872,45 @@ fn epsilon_archive_empty() {
     assert_eq!(a.len(), 0);
 }
 
+// ---- 3D hypervolume specialization ----
+
+#[test]
+fn hypervolume_3d_known_value() {
+    // Two points: (1,0,1) and (0,1,1). Reference at origin.
+    // In oriented maximize space, each point contributes volume.
+    // Point (1,0,1): box [0,1]x[0,0]x[0,1] -> volume 0 (y=0)
+    // Point (0,1,1): box [0,0]x[0,1]x[0,1] -> volume 0 (x=0)
+    // But together they form a union. Actually for non-dominated 3D:
+    // Let's use a simpler case: single point (2, 3, 4), ref=(0,0,0)
+    let mut f = ParetoFrontier::new(vec![
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+    ]);
+    f.push(vec![2.0, 3.0, 4.0], ());
+    let hv = f.hypervolume(&[0.0, 0.0, 0.0]);
+    assert!(
+        (hv - 24.0).abs() < 1e-9,
+        "single point (2,3,4) should have hv=24, got {hv}"
+    );
+}
+
+#[test]
+fn hypervolume_3d_two_points_exact() {
+    // Two non-dominated points in 3D
+    let mut f = ParetoFrontier::new(vec![
+        Direction::Maximize,
+        Direction::Maximize,
+        Direction::Maximize,
+    ]);
+    f.push(vec![2.0, 1.0, 1.0], ());
+    f.push(vec![1.0, 2.0, 1.0], ());
+    // At z=1 slab (thickness 1): 2D front is {(2,1), (1,2)}
+    // 2D HV: rect (0,0)-(1,2) + rect (1,0)-(2,1) = 2 + 1 = 3
+    let hv = f.hypervolume(&[0.0, 0.0, 0.0]);
+    assert!((hv - 3.0).abs() < 1e-9, "expected hv=3.0, got {hv}");
+}
+
 #[test]
 fn epsilon_archive_accessors() {
     let a = EpsilonArchive::<()>::new(
