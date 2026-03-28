@@ -180,31 +180,7 @@ let igd = inverted_generational_distance(&front, &reference).unwrap(); // conver
 
 ## Sensitivity analysis
 
-The `sensitivity` module computes finite-difference Jacobians and objective redundancy analysis:
-
-```rust
-use pare::sensitivity::{finite_difference_jacobian, analyze_redundancy};
-
-let objectives: Vec<fn(&[f64]) -> f64> = vec![
-    |x| x[0] * x[0],
-    |x| (x[0] - 1.0).powi(2),
-];
-
-let jac = finite_difference_jacobian(&[0.5], &objectives, 1e-6);
-let analysis = analyze_redundancy(&jac).unwrap();
-// analysis.redundant_pairs -- objectives that move together
-```
-
-## Examples
-
-[**sensitivity_analysis.rs**](examples/sensitivity_analysis.rs) -- Multi-objective sensitivity analysis for a simulated 3-arm experiment with 9 covariate cells and 6 objectives. Builds a finite-difference Jacobian across the full parameter space, computes the eigenvalue spectrum to find how many objectives actually matter (effective dimensionality), identifies redundant pairs via cosine similarity, and reports which objectives can be dropped without losing decision power. Useful when you suspect your objective set is over-specified.
-
-```bash
-cargo run --example sensitivity_analysis
-```
-
-For background on dominance, crowding distance, and hypervolume, see
-[`TECHNICAL_BACKGROUND.md`](TECHNICAL_BACKGROUND.md).
+The `sensitivity` module computes finite-difference Jacobians and objective redundancy analysis to find which objectives can be dropped. See the `sensitivity_analysis` example and [`TECHNICAL_BACKGROUND.md`](TECHNICAL_BACKGROUND.md) for details.
 
 ## License
 
