@@ -12,6 +12,8 @@ rust-version = "1.75"
 keywords = ["pareto", "frontier", "skyline", "multi-objective", "mcdm"]
 categories = ["algorithms", "mathematics", "science"]
 
+[workspace]
+
 [dependencies]
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
