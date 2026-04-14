@@ -27,3 +27,9 @@ jobs:
         run: cargo clippy --all-targets --features serde -- -D warnings
       - name: test (serde)
         run: cargo test --features serde
+
+      - name: Semver check
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo install cargo-semver-checks --locked || true
+          cargo semver-checks
