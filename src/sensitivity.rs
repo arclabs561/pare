@@ -74,6 +74,88 @@
 //! includes "average MSE" creates zero new tradeoff.  Only worst-case (minimax)
 //! detection introduces a genuinely new axis.  The non-contextual case has only one
 //! cell, so average and worst-case are identical and the distinction is moot.
+//!
+//! # Worked example: 5 bandit metrics, how many are independent?
+//!
+//! Suppose you are evaluating a contextual bandit over 4 covariate cells with the
+//! following 5 metrics:
+//!
+//! 1. **Regret** -- sensitivity proportional to the arm gap `Δ(x)` at each cell.
+//! 2. **IMSE** (integrated mean squared error) -- sensitivity proportional to `-1/p(x)²`.
+//! 3. **Average detection delay** -- sensitivity proportional to `-C/p(x)²` (same shape
+//!    as IMSE, different constant C).
+//! 4. **Worst-case detection** -- all sensitivity on the bottleneck cell (a point mass).
+//! 5. **Calibration** (squared error of arm probability estimates) -- a different functional
+//!    form that is genuinely independent from the others.
+//!
+//! The key insight: metrics 2 and 3 are structurally redundant -- they both have
+//! sensitivity `-C/p(x)²`, differing only by a scalar constant. Adding average detection
+//! delay to a suite that already contains IMSE creates zero new tradeoff axis. The Pareto
+//! front lives in 3D (regret vs. IMSE vs. worst-case detection), not 4D.
+//!
+//! ```rust
+//! use pare::sensitivity::analyze_redundancy;
+//!
+//! // 5 metrics over 3 design points (arms). The sensitivity vectors are the core
+//! // of the analysis: each row encodes how an objective responds to rebalancing
+//! // the allocation between arms.
+//! //
+//! // This example uses interpretable round numbers rather than analytic derivatives.
+//! // The three independent directions (regret, precision, coverage) are orthogonal
+//! // by construction so the effective_dimension is unambiguous.
+//!
+//! // 1. Regret: penalizes under-allocation to high-gap arms. [arm0=best, arm2=worst]
+//! let s_regret = vec![1.0_f64, 0.0, 0.0];
+//!
+//! // 2. IMSE: penalizes under-allocation to hard-to-estimate arms. [arm1=hardest]
+//! let s_imse = vec![0.0_f64, 1.0, 0.0];
+//!
+//! // 3. Average detection delay: same direction as IMSE (both are proportional to
+//! // -C/p(x)^2 for the same p). Redundant with IMSE -- cosine = 1.0 exactly.
+//! let s_det_avg: Vec<f64> = s_imse.iter().map(|&x| 3.0 * x).collect();
+//!
+//! // 4. Worst-case detection: point mass at the coverage-bottleneck arm (arm2).
+//! let s_det_wc = vec![0.0_f64, 0.0, 1.0];
+//!
+//! // 5. Fairness: also concentrates on arm2 (least-allocated arm = highest regret risk).
+//! // Redundant with worst-case detection -- cosine = 1.0 exactly.
+//! let s_fairness: Vec<f64> = s_det_wc.iter().map(|&x| 2.0 * x).collect();
+//!
+//! let sensitivities = vec![
+//!     s_regret,    // 0: regret (genuinely independent)
+//!     s_imse,      // 1: IMSE (genuinely independent)
+//!     s_det_avg,   // 2: avg detection (redundant with 1: both proportional to -C/p^2)
+//!     s_det_wc,    // 3: worst-case detection (genuinely independent from 0, 1)
+//!     s_fairness,  // 4: fairness (redundant with 3: both point masses at arm2)
+//! ];
+//! let analysis = analyze_redundancy(&sensitivities).unwrap();
+//!
+//! // Redundant pair 1: IMSE and avg detection are perfectly correlated.
+//! assert!((analysis.cosine(1, 2).unwrap() - 1.0).abs() < 1e-9,
+//!     "IMSE and avg detection are redundant: both have direction -C/p^2");
+//!
+//! // Redundant pair 2: worst-case detection and fairness are perfectly correlated.
+//! assert!((analysis.cosine(3, 4).unwrap() - 1.0).abs() < 1e-9,
+//!     "worst-case detection and fairness are redundant: both concentrate at arm2");
+//!
+//! // Both redundant pairs are identified automatically.
+//! let redundant = analysis.redundant_pairs(0.999);
+//! assert_eq!(redundant.len(), 2,
+//!     "two redundant pairs: (IMSE, avg-detection) and (worst-case, fairness)");
+//!
+//! // 5 metrics but only 3 genuinely independent directions.
+//! assert_eq!(analysis.effective_dimension(0.01), 3,
+//!     "3 independent tradeoff axes: regret, IMSE-family, worst-case-family");
+//!
+//! // Pareto front dimension: at most rank - 1 = 2.
+//! assert_eq!(analysis.pareto_dimension_bound(1e-6), 2,
+//!     "the Pareto front lives in 2D: trade regret vs precision vs coverage");
+//! ```
+//!
+//! **Interpretation**: Drop average detection delay (metric 3): it is a scalar multiple
+//! of IMSE and adds no optimization pressure. Run your multi-objective optimizer with
+//! 4 objectives: regret, IMSE, worst-case detection, and calibration. The Pareto front
+//! lives in a 3D space, not 4D.
 
 use std::cmp::Ordering;
 
