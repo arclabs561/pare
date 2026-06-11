@@ -7,3 +7,4 @@
 .claude/enrich-report*.md
 .DS_Store
 .claude/settings.local.json
+/semver-checks/
