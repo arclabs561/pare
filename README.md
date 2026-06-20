@@ -180,7 +180,7 @@ let igd = inverted_generational_distance(&front, &reference).unwrap(); // conver
 
 ## Sensitivity analysis
 
-The `sensitivity` module computes finite-difference Jacobians and objective redundancy analysis to find which objectives can be dropped. See the `sensitivity_analysis` example and [`TECHNICAL_BACKGROUND.md`](TECHNICAL_BACKGROUND.md) for details.
+The `sensitivity` module computes finite-difference Jacobians and objective redundancy analysis to find which objectives can be dropped. See [`examples/README.md`](examples/README.md) and [`TECHNICAL_BACKGROUND.md`](TECHNICAL_BACKGROUND.md) for details.
 
 ## License
 
