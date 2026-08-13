@@ -142,7 +142,7 @@ let layers = pareto_layers(&points).unwrap();
 
 ## Epsilon-dominance archiving
 
-For streaming / online optimization where memory must be bounded:
+For streaming / online optimization over a known bounded objective domain:
 
 ```rust
 use pare::{Direction, EpsilonArchive};
@@ -152,7 +152,7 @@ let mut archive = EpsilonArchive::new_uniform(
     0.1, // grid cell width per dimension
 );
 
-// Insert many points; archive stays bounded
+// Within [0, 1]^2, the archive has at most one point per grid cell
 for i in 0..1000 {
     let x = (i as f64) / 1000.0;
     archive.push(vec![x, 1.0 - x], i);
