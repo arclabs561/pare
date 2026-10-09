@@ -10,6 +10,11 @@ use std::cmp::Ordering;
 
 use thiserror::Error;
 
+// Compile and run the README's Rust examples as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 pub mod sensitivity;
 
 /// Direction of optimization for a dimension.
@@ -217,6 +222,7 @@ impl<V> ParetoFrontier<V> {
     /// # Panics
     ///
     /// Panics if `values.len() != directions.len()` or any value is NaN/infinite.
+    /// [`try_push`](Self::try_push) reports the same conditions as an error.
     pub fn push(&mut self, values: Vec<f64>, data: V) -> bool {
         assert_eq!(
             values.len(),
@@ -229,7 +235,41 @@ impl<V> ParetoFrontier<V> {
             values.iter().all(|v| v.is_finite()),
             "all values must be finite (no NaN or Inf)",
         );
+        self.push_unchecked(values, data)
+    }
 
+    /// Add a point like [`push`](Self::push), returning an error instead of
+    /// panicking on bad input.
+    ///
+    /// Returns [`FrontierError::InconsistentDimensions`] if
+    /// `values.len() != directions.len()`, and [`FrontierError::NonFinite`]
+    /// (with `point_idx: 0`, the single point passed) for a NaN or infinite
+    /// value, the same error [`try_new`](ParetoFrontier::try_new) returns.
+    ///
+    /// ```
+    /// use pare::{Direction, FrontierError, ParetoFrontier};
+    ///
+    /// let mut f = ParetoFrontier::new(vec![Direction::Maximize, Direction::Maximize]);
+    /// assert_eq!(f.try_push(vec![0.9, 0.1], "a"), Ok(true));
+    /// assert!(matches!(
+    ///     f.try_push(vec![f64::NAN, 0.5], "b"),
+    ///     Err(FrontierError::NonFinite { dim_idx: 0, .. })
+    /// ));
+    /// ```
+    pub fn try_push(&mut self, values: Vec<f64>, data: V) -> Result<bool, FrontierError> {
+        if values.len() != self.directions.len() {
+            return Err(FrontierError::InconsistentDimensions);
+        }
+        if let Some(dim_idx) = values.iter().position(|v| !v.is_finite()) {
+            return Err(FrontierError::NonFinite {
+                point_idx: 0,
+                dim_idx,
+            });
+        }
+        Ok(self.push_unchecked(values, data))
+    }
+
+    fn push_unchecked(&mut self, values: Vec<f64>, data: V) -> bool {
         // Check if any existing point dominates the new point.
         for existing in &self.points {
             if dominates(&self.directions, self.eps, &existing.values, &values) {
@@ -378,8 +418,7 @@ impl<V> ParetoFrontier<V> {
         }
         (0..self.points.len()).max_by(|&a, &b| {
             self.scalar_score(a, weights)
-                .partial_cmp(&self.scalar_score(b, weights))
-                .unwrap_or(Ordering::Equal)
+                .total_cmp(&self.scalar_score(b, weights))
         })
     }
 
@@ -422,7 +461,7 @@ impl<V> ParetoFrontier<V> {
             indices.sort_by(|&a, &b| {
                 let av = self.points[a].values[i];
                 let bv = self.points[b].values[i];
-                av.partial_cmp(&bv).unwrap_or(Ordering::Equal)
+                av.total_cmp(&bv)
             });
 
             let min_val = self.points[indices[0]].values[i];
@@ -653,7 +692,7 @@ impl<V> ParetoFrontier<V> {
         indices.sort_by(|&a, &b| {
             let sa = self.scalar_score(a, weights);
             let sb = self.scalar_score(b, weights);
-            sb.partial_cmp(&sa).unwrap_or(Ordering::Equal)
+            sb.total_cmp(&sa)
         });
         indices
     }
@@ -745,7 +784,7 @@ impl<V> ParetoFrontier<V> {
         (0..self.points.len()).min_by(|&a, &b| {
             let sa = self.asf(a, weights, ideal);
             let sb = self.asf(b, weights, ideal);
-            sa.partial_cmp(&sb).unwrap_or(Ordering::Equal)
+            sa.total_cmp(&sb)
         })
     }
 
@@ -1377,7 +1416,7 @@ fn hypervolume_max_exact(points: &[Vec<f64>], dim: usize, eps: f64) -> f64 {
         .map(|p| p[dim - 1])
         .filter(|&v| v > eps)
         .collect();
-    levels.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal)); // descending
+    levels.sort_by(|a, b| b.total_cmp(a)); // descending
     levels.dedup_by(|a, b| (*a - *b).abs() <= eps);
 
     let mut hv = 0.0;
@@ -1413,10 +1452,8 @@ fn hypervolume_max_2d(points: &[Vec<f64>], eps: f64) -> f64 {
     idxs.sort_by(|&i, &j| {
         let xi = points[i][0];
         let xj = points[j][0];
-        match xi.partial_cmp(&xj).unwrap_or(Ordering::Equal) {
-            Ordering::Equal => points[j][1]
-                .partial_cmp(&points[i][1])
-                .unwrap_or(Ordering::Equal),
+        match xi.total_cmp(&xj) {
+            Ordering::Equal => points[j][1].total_cmp(&points[i][1]),
             ord => ord,
         }
     });
@@ -1448,11 +1485,7 @@ fn hypervolume_max_3d(points: &[Vec<f64>], eps: f64) -> f64 {
 
     // Sort by z descending.
     let mut sorted: Vec<usize> = (0..points.len()).collect();
-    sorted.sort_by(|&i, &j| {
-        points[j][2]
-            .partial_cmp(&points[i][2])
-            .unwrap_or(Ordering::Equal)
-    });
+    sorted.sort_by(|&i, &j| points[j][2].total_cmp(&points[i][2]));
 
     // 2D front maintained as (x, y) pairs sorted by x ascending.
     // Invariant: y is non-increasing with x (since non-dominated).
@@ -1619,40 +1652,38 @@ pub fn pareto_indices(points: &[Vec<f32>]) -> Option<Vec<usize>> {
     }
 
     let directions = vec![Direction::Maximize; d];
-    let eps = 1e-9;
+    let eps = INDEX_HELPER_EPS;
 
     let as_f64: Vec<Vec<f64>> = points
         .iter()
         .map(|p| p.iter().map(|&x| x as f64).collect())
         .collect();
 
-    let mut keep = vec![true; points.len()];
-    for i in 0..as_f64.len() {
-        if !keep[i] {
-            continue;
-        }
-        for j in 0..as_f64.len() {
-            if i == j || !keep[j] {
-                continue;
-            }
-            if dominates(&directions, eps, &as_f64[j], &as_f64[i]) {
-                keep[i] = false;
-                break; // i is dominated; no need to check further
-            }
-        }
-    }
+    // A point is kept iff no other point dominates it. Every point is a
+    // candidate dominator, including ones already found dominated: with a
+    // tolerance, dominance is not transitive, so skipping them would make the
+    // result depend on input order.
+    let keep = (0..as_f64.len()).map(|i| {
+        !(0..as_f64.len()).any(|j| j != i && dominates(&directions, eps, &as_f64[j], &as_f64[i]))
+    });
 
     Some(
-        keep.into_iter()
-            .enumerate()
+        keep.enumerate()
             .filter_map(|(i, ok)| ok.then_some(i))
             .collect(),
     )
 }
 
-/// Return indices of the Pareto frontier using a simple 2D sweep (maximize/maximize).
+/// Dominance tolerance shared by [`pareto_indices`] and [`pareto_indices_2d`];
+/// the same default as [`ParetoFrontier::new`].
+const INDEX_HELPER_EPS: f64 = 1e-9;
+
+/// Return indices of the Pareto frontier using a 2D sweep (maximize/maximize).
 ///
-/// Falls back to [`pareto_indices`] if `points` are not 2D.
+/// Returns the same set as [`pareto_indices`]: a point is kept iff no other
+/// point dominates it under the same 1e-9 tolerance, and exact duplicates are
+/// all kept. Runs in `O(n log n)`. Falls back to [`pareto_indices`] if
+/// `points` are not 2D. Indices are returned in ascending order.
 pub fn pareto_indices_2d(points: &[Vec<f32>]) -> Option<Vec<usize>> {
     if points.is_empty() {
         return Some(Vec::new());
@@ -1664,30 +1695,36 @@ pub fn pareto_indices_2d(points: &[Vec<f32>]) -> Option<Vec<usize>> {
     if points.iter().any(|p| p.iter().any(|v| !v.is_finite())) {
         return None;
     }
+    let eps = INDEX_HELPER_EPS;
+    let x: Vec<f64> = points.iter().map(|p| p[0] as f64).collect();
+    let y: Vec<f64> = points.iter().map(|p| p[1] as f64).collect();
 
-    // Sort by x descending, then y descending.
-    let mut idxs: Vec<usize> = (0..points.len()).collect();
-    idxs.sort_by(|&i, &j| {
-        let xi = points[i][0];
-        let xj = points[j][0];
-        xj.partial_cmp(&xi)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| {
-                points[j][1]
-                    .partial_cmp(&points[i][1])
-                    .unwrap_or(Ordering::Equal)
-            })
-    });
-
-    let mut best_y = f32::NEG_INFINITY;
-    let mut out = Vec::new();
-    for i in idxs {
-        let y = points[i][1];
-        if y > best_y {
-            out.push(i);
-            best_y = y;
-        }
+    // Sort by x descending; prefix_max_y[k] is the largest y among the first k.
+    let mut order: Vec<usize> = (0..points.len()).collect();
+    order.sort_by(|&i, &j| x[j].total_cmp(&x[i]));
+    let xs: Vec<f64> = order.iter().map(|&i| x[i]).collect();
+    let mut prefix_max_y = Vec::with_capacity(order.len() + 1);
+    prefix_max_y.push(f64::NEG_INFINITY);
+    for &i in &order {
+        let last = *prefix_max_y.last().unwrap_or(&f64::NEG_INFINITY);
+        prefix_max_y.push(last.max(y[i]));
     }
+
+    // j dominates i (see `dominates`, all Maximize) iff
+    //   x_j + eps >= x_i and y_j + eps >= y_i, and
+    //   x_j > x_i + eps or y_j > y_i + eps.
+    // Split on which coordinate is strictly better. Both predicates on x are
+    // monotone in x_j, so each candidate set is a prefix of `order`; i itself
+    // never satisfies the strict condition, so it need not be excluded.
+    let out = (0..points.len())
+        .filter(|&i| {
+            let strictly_right = xs.partition_point(|&xj| xj > x[i] + eps);
+            let dominated_by_x = prefix_max_y[strictly_right] + eps >= y[i];
+            let not_left = xs.partition_point(|&xj| xj + eps >= x[i]);
+            let dominated_by_y = prefix_max_y[not_left] > y[i] + eps;
+            !(dominated_by_x || dominated_by_y)
+        })
+        .collect();
     Some(out)
 }
 

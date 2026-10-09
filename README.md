@@ -129,8 +129,8 @@ use pare::{pareto_indices, pareto_indices_2d, pareto_indices_k_dominance, pareto
 
 let points = vec![vec![0.9f32, 0.1], vec![0.5, 0.5], vec![0.4, 0.4]];
 
-let idx = pareto_indices(&points).unwrap();       // general N-d
-let idx2 = pareto_indices_2d(&points).unwrap();    // optimized 2-d path
+let idx = pareto_indices(&points).unwrap();       // general N-d, O(n^2 d)
+let idx2 = pareto_indices_2d(&points).unwrap();    // 2-d sweep, O(n log n), same set
 
 // k-dominance: a point is dominated only if worse in >= k objectives
 let relaxed = pareto_indices_k_dominance(&points, 2).unwrap();
@@ -176,6 +176,15 @@ let reference = vec![vec![1.0, 0.0], vec![0.5, 0.5], vec![0.0, 1.0]];
 let gd = generational_distance(&front, &reference).unwrap();  // convergence
 let igd = inverted_generational_distance(&front, &reference).unwrap(); // convergence + spread
 ```
+
+## Cost and reference tests
+
+`ParetoFrontier::push` compares the new point with every point on the
+frontier, `O(|front| d)`. Exact hypervolume is `O(n log n)` in 2-d and `O(n^2)`
+in 3-d; above 3-d it slices recursively on the last objective, roughly
+`O(n^(d-1))`. `tests/rosetta_pare.rs`
+checks hypervolume against [pymoo](https://pymoo.org/), which also provides
+the evolutionary algorithms (NSGA-II, NSGA-III) that this crate does not.
 
 ## Sensitivity analysis
 

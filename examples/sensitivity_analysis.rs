@@ -44,7 +44,7 @@ fn main() {
         .iter()
         .map(|&(x1, x2)| {
             (0..k)
-                .max_by(|&a, &b| f(a, x1, x2).partial_cmp(&f(b, x1, x2)).unwrap())
+                .max_by(|&a, &b| f(a, x1, x2).total_cmp(&f(b, x1, x2)))
                 .unwrap()
         })
         .collect();

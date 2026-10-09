@@ -157,8 +157,6 @@
 //! 4 objectives: regret, IMSE, worst-case detection, and calibration. The Pareto front
 //! lives in a 3D space, not 4D.
 
-use std::cmp::Ordering;
-
 /// A row of the sensitivity matrix: one objective's sensitivity across all design points.
 ///
 /// Row `i` has length `n` (the number of design points).  Entry `j` is the partial
@@ -543,7 +541,7 @@ fn symmetric_eigenvalues(a: &[f64], n: usize) -> Vec<f64> {
     // Clamp to >= 0: the input is PSD (Gram matrix), so true eigenvalues are
     // non-negative.  Any negative values are floating-point noise.
     let mut eigenvalues: Vec<f64> = (0..n).map(|i| mat[i * n + i].max(0.0)).collect();
-    eigenvalues.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal));
+    eigenvalues.sort_by(|a, b| b.total_cmp(a));
     eigenvalues
 }
 
