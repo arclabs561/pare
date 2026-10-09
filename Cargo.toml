@@ -8,6 +8,14 @@ repository = "https://github.com/arclabs561/pare"
 homepage = "https://github.com/arclabs561/pare"
 documentation = "https://docs.rs/pare"
 readme = "README.md"
+include = [
+  "/src/**/*.rs",
+  "/examples/**/*.rs",
+  "/Cargo.toml",
+  "/CHANGELOG.md",
+  "/LICENSE*",
+  "/README.md",
+]
 rust-version = "1.75"
 keywords = ["pareto", "frontier", "skyline", "multi-objective", "mcdm"]
 categories = ["algorithms", "mathematics", "science"]
