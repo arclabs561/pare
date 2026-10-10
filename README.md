@@ -7,7 +7,7 @@ Pareto frontier and skyline query primitives.
 
 ```toml
 [dependencies]
-pare = "0.2.2"
+pare = "0.2.3"
 ```
 
 ## Quick start
