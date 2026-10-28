@@ -55,11 +55,11 @@ f.push(vec![0.9, 0.1], "A");
 f.push(vec![0.5, 0.5], "B");
 f.push(vec![0.1, 0.9], "C");
 
-// ASF -- works on non-convex fronts, finds the best compromise point
+// ASF -- select by weighted distance from the ideal point
 let ideal = f.ideal_point().unwrap();
 let best_asf = f.best_asf(&[1.0, 1.0], &ideal).unwrap();
 
-// Knee point -- highest tradeoff point on the frontier
+// Knee heuristic -- farthest from the normalized unit-simplex plane
 let knee = f.knee_index().unwrap();
 
 // Weighted linear score -- simple but misses non-convex regions
@@ -122,7 +122,7 @@ assert_eq!(f.len(), 2);
 
 ## Convenience functions
 
-For simple cases where you just need non-dominated indices from `Vec<f32>` points:
+To return non-dominated indices from `Vec<f32>` points:
 
 ```rust
 use pare::{pareto_indices, pareto_indices_2d, pareto_indices_k_dominance, pareto_layers};
@@ -132,7 +132,7 @@ let points = vec![vec![0.9f32, 0.1], vec![0.5, 0.5], vec![0.4, 0.4]];
 let idx = pareto_indices(&points).unwrap();       // general N-d, O(n^2 d)
 let idx2 = pareto_indices_2d(&points).unwrap();    // 2-d sweep, O(n log n), same set
 
-// k-dominance: a point is dominated only if worse in >= k objectives
+// k-dominance: at least k strict improvements, with no worse objective
 let relaxed = pareto_indices_k_dominance(&points, 2).unwrap();
 
 // Non-dominated sorting: partition into successive Pareto layers

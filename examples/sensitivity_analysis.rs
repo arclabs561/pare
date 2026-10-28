@@ -5,7 +5,7 @@
 //!
 //! - Eigenvalue spectrum of the Gram matrix (how many independent tradeoff axes).
 //! - Pairwise cosine similarity (which objectives are redundant).
-//! - Effective Pareto dimension at several thresholds.
+//! - Effective sensitivity dimension at several thresholds.
 //! - Redundant pairs (objectives that always improve/worsen together).
 //!
 //! Run: `cargo run --example sensitivity_analysis`
@@ -135,7 +135,7 @@ fn main() {
         println!("  eps={:.3}: {} independent axes", eps, dim);
     }
     println!(
-        "  Pareto front dimension bound: {}",
+        "  Pareto dimension heuristic (not an upper bound): {}",
         analysis.pareto_dimension_bound(1e-6)
     );
 
