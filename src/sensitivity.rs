@@ -36,8 +36,8 @@
 //!   principal axes of the sensitivity ellipsoid.
 //!
 //! - **Rank of G** = number of linearly independent sensitivity directions.
-//!   Pareto front dimension = rank - 1 (at most), since one direction is consumed by
-//!   the "move along the front" degree of freedom.
+//!   This is a local linear property, not a bound on Pareto front dimension.
+//!   Opposing objectives can have rank one and a one-dimensional front.
 //!
 //! - **Effective dimension** at tolerance eps = number of eigenvalues above
 //!   `eps * max_eigenvalue`.  This is a soft rank that ignores numerically negligible
@@ -45,10 +45,11 @@
 //!
 //! # Saturation principle
 //!
-//! The Pareto front dimension is bounded by `min(m - 1, D_eff)` where `D_eff` is the
-//! effective dimension of the design space (K-1 for non-contextual with K arms, ~K*M
-//! for M covariate cells).  You can name 17 objectives, but if your design has 3
-//! degrees of freedom, at most 4 can be simultaneously non-redundant.
+//! The design domain limits the number of independent sensitivity directions.
+//! For example, an allocation among K arms has K-1 free weights. This does not
+//! determine how many objectives can be removed: objectives with dependent
+//! gradients may still conflict, and local gradients need not describe the
+//! objectives across the feasible domain.
 //!
 //! References:
 //! - Brockhoff & Zitzler 2006, "Are All Objectives Necessary?" (PPSN IX) --
@@ -90,8 +91,8 @@
 //!
 //! The key insight: metrics 2 and 3 are structurally redundant -- they both have
 //! sensitivity `-C/p(x)²`, differing only by a scalar constant. Adding average detection
-//! delay to a suite that already contains IMSE creates zero new tradeoff axis. The Pareto
-//! front lives in 3D (regret vs. IMSE vs. worst-case detection), not 4D.
+//! delay to a suite that already contains IMSE creates zero new tradeoff axis.
+//! Local sensitivity rank alone does not determine Pareto front dimension.
 //!
 //! ```rust
 //! use pare::sensitivity::analyze_redundancy;
@@ -147,15 +148,15 @@
 //! assert_eq!(analysis.effective_dimension(0.01), 3,
 //!     "3 independent tradeoff axes: regret, IMSE-family, worst-case-family");
 //!
-//! // Pareto front dimension: at most rank - 1 = 2.
+//! // The legacy rank-minus-one heuristic returns 2; it is not a dimension bound.
 //! assert_eq!(analysis.pareto_dimension_bound(1e-6), 2,
-//!     "the Pareto front lives in 2D: trade regret vs precision vs coverage");
+//!     "the legacy heuristic is rank minus one");
 //! ```
 //!
 //! **Interpretation**: Drop average detection delay (metric 3): it is a scalar multiple
 //! of IMSE and adds no optimization pressure. Run your multi-objective optimizer with
 //! 4 objectives: regret, IMSE, worst-case detection, and calibration. The Pareto front
-//! lives in a 3D space, not 4D.
+//! dimension requires analysis over the feasible domain.
 
 /// A row of the sensitivity matrix: one objective's sensitivity across all design points.
 ///
@@ -201,8 +202,8 @@ impl RedundancyAnalysis {
     /// the dominant eigenvalue's magnitude.  With `eps = 0.01`, eigenvalues below 1% of
     /// the maximum are treated as negligible.
     ///
-    /// Interpretation: if this returns k, then the Pareto front is *approximately*
-    /// (k-1)-dimensional, and the remaining objectives create only tiny perturbations.
+    /// This describes the supplied local sensitivities, not the dimension of the
+    /// Pareto front over the feasible domain.
     pub fn effective_dimension(&self, eps: f64) -> usize {
         let max_ev = self.eigenvalues.first().copied().unwrap_or(0.0);
         if max_ev <= 0.0 {
@@ -215,12 +216,17 @@ impl RedundancyAnalysis {
             .count()
     }
 
-    /// Pareto front dimension upper bound: `min(rank - 1, m - 1)`, where rank
-    /// is the number of eigenvalues above a numerical tolerance.
+    /// Legacy local rank heuristic: `min(rank.saturating_sub(1), m - 1)`, where
+    /// rank is the number of eigenvalues above the absolute tolerance `tol`.
     ///
-    /// This is a hard algebraic bound.  If rank = 1, all objectives are proportional
-    /// and the Pareto front is a point (dimension 0).  If rank = m, all objectives
-    /// are linearly independent and the front is (m-1)-dimensional.
+    /// **Despite its name, this is not an upper bound on Pareto front dimension.**
+    /// For objectives `f(x) = x` and `g(x) = -x` on `[-1, 1]`, the sensitivity
+    /// matrix has rank one and this method returns zero, but the entire line
+    /// segment is Pareto optimal and has dimension one. A Jacobian at one point
+    /// also cannot determine the global geometry of nonlinear objectives.
+    ///
+    /// The name and calculation are retained for compatibility. Do not use the
+    /// result to remove objectives or constrain the dimension of a frontier.
     pub fn pareto_dimension_bound(&self, tol: f64) -> usize {
         let rank = self.eigenvalues.iter().filter(|&&ev| ev > tol).count();
         if rank == 0 {
@@ -318,7 +324,7 @@ impl RedundancyAnalysis {
 ///
 /// let analysis = analyze_redundancy(&sensitivities).unwrap();
 ///
-/// // Only one independent direction (rank 1), so Pareto dimension = 0.
+/// // Only one independent local sensitivity direction (rank 1).
 /// assert_eq!(analysis.effective_dimension(0.01), 1);
 /// assert!((analysis.cosine(0, 1).unwrap() - 1.0).abs() < 1e-9);
 ///
@@ -556,8 +562,7 @@ mod tests {
     #[test]
     fn proportional_sensitivities_have_rank_one() {
         // If s_1 = alpha * s_0, the Gram matrix has rank 1.
-        // Pareto dimension = rank - 1 = 0 (no tradeoff: optimizing one objective
-        // automatically optimizes the other).
+        // The rank-minus-one heuristic returns zero for aligned sensitivities.
         let s = vec![
             vec![1.0, 2.0, 3.0, 4.0],
             vec![3.0, 6.0, 9.0, 12.0], // 3x row 0
@@ -573,7 +578,7 @@ mod tests {
         // s_1 = -2 * s_0.  Cosine = -1.0 (perfectly opposed).
         // Rank is still 1: the objectives are coupled (one is a deterministic
         // function of the other), just in opposite directions.
-        // Pareto dimension = 0.
+        // The heuristic returns zero even though opposing objectives can trade off.
         let s = vec![vec![1.0, 2.0, 3.0], vec![-2.0, -4.0, -6.0]];
         let a = analyze_redundancy(&s).unwrap();
         assert_eq!(a.pareto_dimension_bound(1e-6), 0);
@@ -707,7 +712,7 @@ mod tests {
             "Regret and MSE should be anti-proportional, got {cos_r_mse}"
         );
 
-        // All 1D vectors => Gram rank = 1, Pareto dimension = 0.
+        // All 1D vectors => Gram rank = 1, legacy heuristic = 0.
         assert_eq!(a.pareto_dimension_bound(1e-6), 0);
     }
 

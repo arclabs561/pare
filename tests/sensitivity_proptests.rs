@@ -126,8 +126,8 @@ proptest! {
         }
     }
 
-    /// Pareto front dimension <= m - 1 always (you need at least 2 objectives
-    /// to have a 1-dimensional front).
+    /// The legacy rank heuristic is capped at m - 1 by construction;
+    /// this does not establish a bound on an actual Pareto front.
     #[test]
     fn pareto_bound_at_most_m_minus_1(
         sens in sensitivity_matrix(2..=8, 3..=15),
