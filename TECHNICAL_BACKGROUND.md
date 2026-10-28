@@ -4,15 +4,15 @@ This note captures the technical concepts behind `pare`’s API and implementati
 
 ## Pareto dominance and the skyline / frontier
 
-Let each candidate be an **objective vector** \(x \in \mathbb{R}^d\). Each dimension has an optimization direction:
+Let each candidate be an **objective vector** $x \in \mathbb{R}^d$. Each dimension has an optimization direction:
 
 - **maximize**: higher is better
 - **minimize**: lower is better
 
-With “all maximize” objectives, a point \(a\) **dominates** \(b\) (written \(a \succ b\)) iff:
+With “all maximize” objectives, a point $a$ **dominates** $b$ (written $a \succ b$) iff:
 
-- \(a_i \ge b_i\) for all \(i\), and
-- \(a_i > b_i\) for at least one \(i\).
+- $a_i \ge b_i$ for all $i$, and
+- $a_i > b_i$ for at least one $i$.
 
 With mixed maximize/minimize objectives, the comparisons are flipped per dimension (this is what `pare::dominates` does).
 
@@ -23,7 +23,7 @@ See: Chomicki et al., “Skyline Queries, Front and Back” (SIGMOD Record, 2013
 
 Dominance induces a **partial order**: many points can be **incomparable**.
 
-In 2D maximize space, if \(a = (10, 0)\) and \(b = (0, 10)\), neither dominates the other. Both are “Pareto-optimal” with respect to each other, and both can appear on the skyline.
+In 2D maximize space, if $a = (10, 0)$ and $b = (0, 10)$, neither dominates the other. Both are “Pareto-optimal” with respect to each other, and both can appear on the skyline.
 
 This matters because:
 
@@ -32,14 +32,14 @@ This matters because:
 
 ### Algorithmic baseline
 
-The naive frontier computation is \(O(n^2 d)\): for each point, check whether any other point dominates it.
+The naive frontier computation is $O(n^2 d)$: for each point, check whether any other point dominates it.
 
-Practical skyline/frontier implementations use pruning and/or indexing to avoid the quadratic worst case on typical data distributions, but the worst-case can still be quadratic in \(n\) (see skyline literature referenced in the survey above).
+Practical skyline/frontier implementations use pruning and/or indexing to avoid the quadratic worst case on typical data distributions, but the worst-case can still be quadratic in $n$ (see skyline literature referenced in the survey above).
 
 `pare`’s primary data structure is an **incremental frontier**:
 
-- To insert a new point \(p\), reject it if any current frontier point dominates \(p\).
-- Otherwise remove any frontier points dominated by \(p\), then add \(p\).
+- To insert a new point $p$, reject it if any current frontier point dominates $p$.
+- Otherwise remove any frontier points dominated by $p$, then add $p$.
 
 This is a common “online skyline” pattern; it tends to work well when the maintained frontier is much smaller than the full candidate set.
 
@@ -47,23 +47,23 @@ This is a common “online skyline” pattern; it tends to work well when the ma
 
 Two effects make frontiers/skyline results “blow up” in size:
 
-- **More dimensions ⇒ more incomparability**: as \(d\) increases, it becomes easier for points to trade off across many axes and thus avoid being dominated.
+- **More dimensions ⇒ more incomparability**: as $d$ increases, it becomes easier for points to trade off across many axes and thus avoid being dominated.
 - **Anti-correlation ⇒ more skyline points**: when objectives trade off strongly (e.g., “better quality implies higher price”), dominance becomes rarer, so the skyline grows.
 
 The anti-correlation point shows up explicitly in skyline literature; Shang & Kitsuregawa discuss skyline behavior on anti-correlated distributions and why “nice average-case assumptions” break on real data.  
 See: Shang & Kitsuregawa, “Skyline Operator on Anti-correlated Distributions” (PVLDB) PDF at `http://www.vldb.org/pvldb/vol6/p649-shang.pdf`.
 
-The pragmatic implication for system design is that “compute the skyline then let the user pick” stops being viable when the skyline is large; you need a second-stage preference model or an approximation/archiving strategy.
+When the skyline is too large to inspect, select points by preference or use an archive with a coarser resolution.
 
 #### What you can do instead (design menu)
 
 There isn’t a single universally-right answer, but these are common options:
 
-- **Scalarization (utility function)**: map \(x \mapsto u(x)\) and take top‑k by \(u\). This is the simplest way to force a total order, but you must accept the modeling assumptions.
+- **Scalarization (utility function)**: map $x \mapsto u(x)$ and take top‑k by $u$. This is the simplest way to force a total order, but you must accept the modeling assumptions.
 - **Multiple scalarizations**: sample many weight vectors and take the union of the corresponding winners; this is a cheap way to get “coverage” without keeping the whole skyline.
 - **ε‑archiving / grid archiving**: keep at most one representative per cell of a discretized objective space to cap archive size at a desired resolution.
 - **Relaxed dominance variants**:
-  - `pare` includes **k‑dominance** helpers (`pareto_indices_k_dominance`) which require being strictly better in at least \(k\) dimensions while being non-worse in all dimensions. This reduces frontier size, but it is a different relation than Pareto dominance, so interpret it as an approximation/heuristic rather than “the” frontier.
+  - `pare` includes **k‑dominance** helpers (`pareto_indices_k_dominance`) which require being strictly better in at least $k$ dimensions while being non-worse in all dimensions. For `k > 1`, this makes domination harder and can retain more points than ordinary Pareto dominance; it does not shrink the frontier.
 - **Post-filter diversity**: compute some frontier/approx-front and then select a diverse subset (crowding distance, farthest-point sampling, clustering).
 - **Preference interaction**: ask the decision maker for a few comparisons or constraints and refine (common in decision analysis; less common in pure DB skyline).
 
@@ -71,8 +71,8 @@ There isn’t a single universally-right answer, but these are common options:
 
 Real systems rarely have perfect real numbers:
 
-- **Exact ties**: if \(a=b\), neither point strictly dominates the other by the definition above (because “strictly better in at least one dimension” fails). Many libraries choose a tie-breaking rule (e.g., dedup identical points, keep earliest, keep latest, keep both).
-- **Near-ties**: when values are within floating error, “\(>\)” and “\(\ge\)” become unstable. A small tolerance \( \varepsilon \) makes comparisons more robust but changes the induced order.
+- **Exact ties**: if $a=b$, neither point strictly dominates the other by the definition above (because “strictly better in at least one dimension” fails). Many libraries choose a tie-breaking rule (e.g., dedup identical points, keep earliest, keep latest, keep both).
+- **Near-ties**: when values are within floating error, “$>$” and “$\ge$” become unstable. A small tolerance $\varepsilon$ makes comparisons more robust but changes the induced order.
 
 `pare` uses a small numeric tolerance `eps` for dominance checks. Conceptually, it implements “strictly better by more than eps in at least one dimension, and not worse by more than eps in any dimension.”
 
@@ -108,19 +108,19 @@ NSGA-II uses crowding distance primarily as a **tie-breaker** within a non-domin
 
 ## Hypervolume indicator (S-metric)
 
-The **hypervolume** of a set \(P\) measures the volume of objective space **dominated** by \(P\), relative to a chosen **reference point** \(r\). For all-maximize objectives, each point \(p\) defines a box \([r_1, p_1] \times \cdots \times [r_d, p_d]\) (clamped to non-negative side lengths), and hypervolume is the Lebesgue measure of the union of these boxes.
+The **hypervolume** of a set $P$ measures the volume of objective space **dominated** by $P$, relative to a chosen **reference point** $r$. For all-maximize objectives, each point $p$ defines a box $[r_1, p_1] \times \cdots \times [r_d, p_d]$ (clamped to non-negative side lengths), and hypervolume is the Lebesgue measure of the union of these boxes.
 
 For mixed maximize/minimize objectives, one common trick (used by `pare`) is to transform objectives into a unified “improvement over reference” maximize space:
 
-- maximize dim: \(\max(0, p_i - r_i)\)
-- minimize dim: \(\max(0, r_i - p_i)\)
+- maximize dim: $\max(0, p_i - r_i)$
+- minimize dim: $\max(0, r_i - p_i)$
 
 Then compute hypervolume against the origin in this oriented space.
 
 Key practical points:
 
-- **Reference point matters**: hypervolume values are only comparable for the same \(r\) (and same orientation/scaling).
-- **Computational cost grows quickly with dimension**: exact algorithms are easy in 2D, harder in higher \(d\), and the general problem is expensive in the worst case.
+- **Reference point matters**: hypervolume values are only comparable for the same $r$ (and same orientation/scaling).
+- **Computational cost grows quickly with dimension**: exact algorithms are easy in 2D, harder in higher $d$, and the general problem is expensive in the worst case.
 
 Good open-access survey:
 
@@ -139,7 +139,7 @@ Hypervolume has a strong theoretical property (strict monotonicity w.r.t. set do
 
 - **Units matter**: “latency in ms” and “accuracy in [0,1]” interact multiplicatively in volume. If you rescale latency from ms to seconds, you rescale hypervolume.
 - **Normalization is a modeling decision**: normalizing objectives (e.g., to [0,1]) can improve comparability, but it also injects assumptions (which min/max? over what population? fixed bounds or dynamic bounds?).
-- **Reference point selection is a preference**: choosing \(r\) implicitly says what region of objective space you consider relevant. “Bad” reference points can produce hypervolume values that are dominated by a single extreme point, masking diversity.
+- **Reference point selection is a preference**: choosing $r$ implicitly says what region of objective space you consider relevant. “Bad” reference points can produce hypervolume values that are dominated by a single extreme point, masking diversity.
 
 ### Choosing reference points and normalization bounds (the “quiet preference injection”)
 
@@ -152,7 +152,7 @@ Two knobs make hypervolume (and any normalized scalar score) look objective whil
 
 If you normalize with **dynamic** bounds (e.g., min/max over the *current frontier*), you get a moving coordinate system:
 
-- Pros: always maps the currently-seen range into \([0,1]\) so weights stay numerically well-conditioned.
+- Pros: always maps the currently-seen range into $[0,1]$ so weights stay numerically well-conditioned.
 - Cons: scores become **time-dependent**: adding a new extreme point can change the score of existing points even if their raw objectives did not change.
 
 If you normalize with **static** bounds (e.g., known feasible limits), you get stable semantics:
@@ -160,14 +160,14 @@ If you normalize with **static** bounds (e.g., known feasible limits), you get s
 - Pros: scores are comparable across runs and time; “0.9” means the same thing tomorrow.
 - Cons: you must know or estimate bounds, and if they are too loose the normalized values become squashed (small numeric differences become irrelevant).
 
-`pare::scalar_score` currently uses *frontier-local min/max* (dynamic), which is convenient for quick selection but should not be treated as a stable utility function unless you also control the candidate set definition.
+`ParetoFrontier::scalar_score` currently uses *frontier-local min/max* (dynamic), which is convenient for quick selection but should not be treated as a stable utility function unless you also control the candidate set definition.
 
 #### Reference point selection (hypervolume)
 
-Hypervolume compares sets with respect to a reference point \(r\). In practice:
+Hypervolume compares sets with respect to a reference point $r$. In practice:
 
-- Choose \(r\) as a **clearly-worse-than-acceptable** objective vector (a “nadir” / “worst acceptable” point), not merely the origin unless your objectives are literally improvements over zero.
-- Keep \(r\) **fixed** when you want to compare progress or compare algorithms. If you move \(r\) over time, you are changing the measurement instrument.
+- Choose $r$ as a **clearly-worse-than-acceptable** objective vector (a “nadir” / “worst acceptable” point), not merely the origin unless your objectives are literally improvements over zero.
+- Keep $r$ **fixed** when you want to compare progress or compare algorithms. If you move $r$ over time, you are changing the measurement instrument.
 
 In mixed maximize/minimize settings, be explicit about whether you interpret `ref_point` as:
 
@@ -176,19 +176,19 @@ In mixed maximize/minimize settings, be explicit about whether you interpret `re
 
 ### The nuance: why 2D is “easy” and higher dimensions are not
 
-In 2D maximize space, for a non-dominated set sorted by \(x\) ascending, the \(y\) values are non-increasing. Hypervolume can then be computed as a sum of rectangle strips.
+In 2D maximize space, for a non-dominated set sorted by $x$ ascending, the $y$ values are non-increasing. Hypervolume can then be computed as a sum of rectangle strips.
 
-In \(d \ge 3\), the union-of-boxes geometry becomes much more complex; exact computation typically uses recursive decomposition/slicing or specialized data structures, and worst-case complexity grows quickly. The Guerreiro et al. survey is the best “one stop” map of these algorithmic trade-offs.
+In $d \ge 3$, the union-of-boxes geometry becomes much more complex; exact computation typically uses recursive decomposition/slicing or specialized data structures, and worst-case complexity grows quickly. The Guerreiro et al. survey is the best “one stop” map of these algorithmic trade-offs.
 
 ### Hypervolume contributions and subset selection (and a non-obvious failure mode)
 
-For a set \(P\), the **hypervolume contribution** of a point \(p \in P\) is commonly defined as:
+For a set $P$, the **hypervolume contribution** of a point $p \in P$ is commonly defined as:
 
-\[
+$$
 \mathrm{HVC}(p \mid P) = \mathrm{HV}(P) - \mathrm{HV}(P \setminus \{p\})
-\]
+$$
 
-This is useful in “keep exactly \(m\) points” workflows:
+This is useful in “keep exactly $m$ points” workflows:
 
 - If you start from a candidate set and repeatedly drop the point with the smallest contribution, you often preserve most of the dominated volume with far fewer points.
 - This idea appears in hypervolume-based EMOAs and in the “hypervolume subset selection problem” (HSSP) literature (surveyed by Guerreiro et al.).
@@ -203,13 +203,13 @@ Takeaway for `pare` usage:
 
 ## ε-dominance and archiving (why it exists)
 
-In many-objective optimization, the true non-dominated set can grow very large. **Archiving** strategies reduce this set while preserving coverage, often by introducing a resolution parameter \( \varepsilon \) (an “indifference” threshold) so points that are too close are treated as effectively equivalent.
+In many-objective optimization, the true non-dominated set can grow very large. **Archiving** strategies reduce this set while preserving coverage, often by introducing a resolution parameter $\varepsilon$ (an “indifference” threshold) so points that are too close are treated as effectively equivalent.
 
 One place to start for background on archiving and indicator-based evaluation is Laumanns’ dissertation, which discusses hypervolume-related indicators and archiving ideas in depth:
 
 - Laumanns, dissertation PDF at `https://pub.tik.ee.ethz.ch/people/thiele/paper/diss_laumanns.pdf`.
 
-`pare` does not currently implement ε-archiving as a first-class feature (it uses an `eps` tolerance for floating comparison in dominance), but the concept is relevant if you later want to bound frontier size or enforce a “grid” resolution.
+`pare::EpsilonArchive` keeps at most one representative per grid cell and removes dominated cells. A bounded objective domain gives a bounded number of cells. Its grid resolution is separate from the `eps` tolerance used in floating-point dominance checks.
 
 ## Objective redundancy analysis (`pare::sensitivity`)
 
@@ -223,26 +223,37 @@ For each objective `L_i`, the **sensitivity function** measures how `L_i` respon
 s_i(j) = dL_i / d mu(j)
 ```
 
-Two objectives are **locally redundant** when their sensitivity vectors are proportional (cosine similarity = 1.0 or -1.0). The **effective objective dimension** is the number of linearly independent sensitivity directions, computed via the eigenvalue spectrum of the Gram matrix `G_{ij} = <s_i, s_j>`.
+Proportional sensitivity vectors are linearly dependent. Positive proportionality
+means the objectives move together locally; negative proportionality can mean a
+tradeoff. The **effective objective dimension** counts eigenvalues above a
+relative threshold in the Gram matrix `G_{ij} = <s_i, s_j>`.
 
-### Saturation principle
+### Dimension heuristic
 
-The Pareto front dimension is bounded by:
+Despite its name, `pareto_dimension_bound(tol)` returns a heuristic:
 
 ```
-dim(Pareto front) <= min(m - 1, D_eff)
+min(rank - 1, m - 1)
 ```
 
-where `m` is the number of named objectives and `D_eff` is the effective dimension of the design space. You can name 17 objectives, but if your design has 3 degrees of freedom, at most 4 can be simultaneously non-redundant.
+Here `rank` counts Gram eigenvalues above the absolute tolerance `tol`, and `m`
+is the number of objectives. The result is clamped to zero for rank zero.
+It is not an upper bound on Pareto-front dimension. For example, maximizing
+`x` and `-x` over an interval gives rank-one sensitivities, but every point on
+the resulting line segment is nondominated. The heuristic returns zero for
+that one-dimensional front.
 
 ### Average-case vs. worst-case aggregation
 
-A structural finding relevant to multi-objective sequential sampling:
+For an average objective of the form `sum_x c(x) / p(x)`, the derivative with
+respect to allocation `p(x)` is `-c(x) / p(x)^2`. Two such objectives have
+proportional sensitivities only when their coefficients are proportional.
+Sharing the denominator alone does not make the objectives redundant.
 
-- **Average-case objectives** (average detection delay, integrated MSE) have sensitivity functions proportional to `1/p(x)^2`, where `p(x)` is the allocation probability at design point `x`. They are **structurally redundant** regardless of problem dimension.
-- **Worst-case objectives** (worst-case detection delay) concentrate sensitivity on the bottleneck cell, producing a point-mass sensitivity that is linearly independent from smooth objectives.
-
-This means: adding "average detection delay" to a set of objectives that already includes "average MSE" does **not** create a new tradeoff axis. To get a genuinely independent monitoring objective, one must use a worst-case formulation.
+A worst-case objective can concentrate sensitivity on a bottleneck cell.
+Whether that adds an independent direction depends on the other objectives
+and the current allocation. Check the sensitivity vectors before removing
+an objective; local dependence does not establish global redundancy.
 
 ### Usage
 
@@ -257,7 +268,7 @@ let sensitivities = vec![
 
 let analysis = analyze_redundancy(&sensitivities).unwrap();
 assert_eq!(analysis.effective_dimension(0.01), 2);
-assert_eq!(analysis.pareto_dimension_bound(1e-6), 1);
+assert_eq!(analysis.pareto_dimension_bound(1e-6), 1); // heuristic, not a bound
 
 let pairs = analysis.redundant_pairs(0.99);
 assert_eq!(pairs.len(), 1); // objectives 0 and 1 are redundant
@@ -275,7 +286,7 @@ See `pare::sensitivity::RedundancyAnalysis` for the full API: eigenvalues, cosin
 
 - **Frontier maintenance**: `ParetoFrontier::push` is an online skyline update; worst case is linear in current frontier size times dimension.
 - **Comparisons**: `dominates` is direction-aware with an epsilon tolerance; this affects edge cases when values are extremely close.
-- **Scoring**: `scalar_score` normalizes per-dimension to \([0,1]\) using min/max over the current frontier and flips for `Minimize`; it is a convenience for picking a single point given weights, not a substitute for multi-objective reasoning.
+- **Scoring**: `scalar_score` normalizes per-dimension to $[0,1]$ using min/max over the current frontier and flips for `Minimize`; it is a convenience for picking a single point given weights, not a substitute for multi-objective reasoning.
 - **Hypervolume**: exact hypervolume is useful for evaluation but can be expensive at higher dimension; consider approximation or contributions if you extend `pare`.
 
 ### One more nuance: frontier order is not “sorted”
