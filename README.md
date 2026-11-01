@@ -81,7 +81,7 @@ let contribs = f.hypervolume_contributions(&ref_pt);
 
 ## Normalization and scaling
 
-Objectives often have different units (accuracy 0-1, latency 10-500ms, cost $0-$10000). pare handles this:
+Objectives often have different units (accuracy 0 to 1, latency 10 to 500 ms, cost 0 to 10,000 dollars):
 
 ```rust
 use pare::{Direction, ParetoFrontier};
@@ -183,8 +183,7 @@ let igd = inverted_generational_distance(&front, &reference).unwrap(); // conver
 frontier, `O(|front| d)`. Exact hypervolume is `O(n log n)` in 2-d and `O(n^2)`
 in 3-d; above 3-d it slices recursively on the last objective, roughly
 `O(n^(d-1))`. `tests/rosetta_pare.rs`
-checks hypervolume against [pymoo](https://pymoo.org/), which also provides
-the evolutionary algorithms (NSGA-II, NSGA-III) that this crate does not.
+checks hypervolume against [pymoo](https://pymoo.org/).
 
 ## Sensitivity analysis
 
