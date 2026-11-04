@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-04
+
 - `pareto_layers` no longer skips points it has already removed when
   checking dominance, so layer 0 equals `pareto_indices` and the layers no
   longer depend on input order. Previously a point dominated (within the
