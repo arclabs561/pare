@@ -1305,6 +1305,12 @@ impl ParetoFrontier<usize> {
     /// For mixed maximize/minimize objectives, build a frontier with
     /// [`ParetoFrontier::new`] and insert points via [`ParetoFrontier::push`].
     ///
+    /// Points are pushed one at a time into an online archive, and a
+    /// rejected point never removes a later one. Because dominance uses a
+    /// tolerance, points within that tolerance of each other can make the
+    /// result depend on input order and differ from [`pareto_indices`]. The
+    /// result is always mutually non-dominated.
+    ///
     /// ```rust
     /// use pare::ParetoFrontier;
     ///
@@ -1730,8 +1736,13 @@ pub fn pareto_indices_2d(points: &[Vec<f32>]) -> Option<Vec<usize>> {
 
 /// Partition points into successive non-dominated layers (Pareto layers).
 ///
-/// Layer 0 is the Pareto front. Layer 1 is the front of the remaining points
-/// after removing layer 0, and so on. All objectives are maximized.
+/// Layer 0 is the Pareto front, the set [`pareto_indices`] returns. Layer 1 is
+/// the front of the remaining points after removing layer 0, and so on. All
+/// objectives are maximized, with the same 1e-9 dominance tolerance as
+/// [`pareto_indices`]. That tolerance makes dominance non-transitive, so in
+/// three or more dimensions every remaining point can be dominated by another
+/// (a cycle of near-ties); those points form the last layer, even when it is
+/// layer 0 and [`pareto_indices`] returns no points.
 ///
 /// Returns `None` if any point has inconsistent dimensions or non-finite values.
 ///
@@ -1774,26 +1785,27 @@ pub fn pareto_layers(points: &[Vec<f32>]) -> Option<Vec<Vec<usize>>> {
     let mut layers = Vec::new();
 
     while !remaining.is_empty() {
-        // Find the non-dominated set among remaining
-        let mut keep = vec![true; remaining.len()];
-        for i in 0..remaining.len() {
-            if !keep[i] {
-                continue;
-            }
-            for j in 0..remaining.len() {
-                if i == j || !keep[j] {
-                    continue;
-                }
-                if dominates(
-                    &directions,
-                    eps,
-                    &as_f64[remaining[j]],
-                    &as_f64[remaining[i]],
-                ) {
-                    keep[i] = false;
-                    break;
-                }
-            }
+        // Find the non-dominated set among remaining. As in `pareto_indices`,
+        // every remaining point is a candidate dominator: with a tolerance,
+        // dominance is not transitive, so skipping points already found
+        // dominated would make the layers depend on input order.
+        let mut keep: Vec<bool> = (0..remaining.len())
+            .map(|i| {
+                !(0..remaining.len()).any(|j| {
+                    j != i
+                        && dominates(
+                            &directions,
+                            eps,
+                            &as_f64[remaining[j]],
+                            &as_f64[remaining[i]],
+                        )
+                })
+            })
+            .collect();
+        // Non-transitivity also allows a cycle in which every remaining point
+        // is dominated by another; put such points in one last layer.
+        if !keep.contains(&true) {
+            keep.fill(true);
         }
 
         let layer: Vec<usize> = remaining

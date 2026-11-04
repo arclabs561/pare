@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- `pareto_layers` no longer skips points it has already removed when
+  checking dominance, so layer 0 equals `pareto_indices` and the layers no
+  longer depend on input order. Previously a point dominated (within the
+  1e-9 tolerance) only by an already-removed point stayed in layer 0. In 3
+  or more dimensions the tolerance allows dominance cycles; points that are
+  all dominated by each other form the last layer.
+
 ## [0.2.3] - 2026-10-09
 
 - Added `ParetoFrontier::try_push`, which returns
