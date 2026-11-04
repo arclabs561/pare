@@ -33,7 +33,7 @@ serde = ["dep:serde"]
 [dev-dependencies]
 proptest = "1.5"
 criterion = "0.5"
-rand = "0.9"
+rand = "0.10"
 rand_chacha = "0.9"
 serde_json = "1.0"
 # Rosetta cross-language correctness fixtures (tests/rosetta_*.rs).
